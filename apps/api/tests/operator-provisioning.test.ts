@@ -330,4 +330,25 @@ describe('Super Admin Operator & Owner Provisioning Flow', () => {
     expect(typeof firstOp.busesCount).toBe('number');
     expect(typeof firstOp.staffCount).toBe('number');
   });
+
+  it('8. should successfully create operator without providing email (email is optional)', async () => {
+    const phoneNoEmail = `98788${Date.now().toString().slice(-5)}`;
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/v1/tenant/operators',
+      headers: { authorization: `Bearer ${superAdminToken}` },
+      payload: {
+        companyName: `EmailFree Rural Lines ${Date.now()}`,
+        ownerName: 'Sunil Mahanta',
+        phone: phoneNoEmail,
+        password: 'Password123!',
+      },
+    });
+
+    expect(res.statusCode).toBe(201);
+    const body = res.json();
+    expect(body.success).toBe(true);
+    expect(body.data.operator.companyName).toContain('EmailFree Rural Lines');
+    expect(body.data.owner.phone).toBe(phoneNoEmail);
+  });
 });

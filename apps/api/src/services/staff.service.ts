@@ -439,7 +439,7 @@ export async function createOperatorAndOwner(
   const companyNameTrimmed = input.companyName.trim();
   const ownerNameTrimmed = input.ownerName.trim();
   const phoneTrimmed = input.phone.trim();
-  const emailTrimmed = input.email.trim().toLowerCase();
+  const emailTrimmed = input.email && input.email.trim() ? input.email.trim().toLowerCase() : `${phoneTrimmed}@ruralbus.local`;
   const rawPassword = input.password ? input.password.trim() : '';
 
   if (!rawPassword || rawPassword.length < 8) {
@@ -458,15 +458,17 @@ export async function createOperatorAndOwner(
       throw new ConflictError('A user with this mobile number is already registered');
     }
 
-    // 2. Check user email uniqueness
-    const [existingEmail] = await tx
-      .select({ id: users.id })
-      .from(users)
-      .where(eq(users.email, emailTrimmed))
-      .limit(1);
+    // 2. Check user email uniqueness if explicitly provided
+    if (input.email && input.email.trim()) {
+      const [existingEmail] = await tx
+        .select({ id: users.id })
+        .from(users)
+        .where(eq(users.email, emailTrimmed))
+        .limit(1);
 
-    if (existingEmail) {
-      throw new ConflictError('A user with this email address is already registered');
+      if (existingEmail) {
+        throw new ConflictError('A user with this email address is already registered');
+      }
     }
 
     // 3. Check operator company name uniqueness
@@ -522,7 +524,7 @@ export async function createOperatorAndOwner(
       .values({
         fullName: ownerNameTrimmed,
         phone: phoneTrimmed,
-        email: emailTrimmed,
+        email: input.email && input.email.trim() ? emailTrimmed : null,
         passwordHash,
         developmentPassword: null,
         role: 'PASSENGER',

@@ -34,7 +34,7 @@ export interface CreateOperatorInput {
   companyName: string;
   ownerName: string;
   phone: string;
-  email: string;
+  email?: string;
   password: string;
   businessCode?: string;
 }

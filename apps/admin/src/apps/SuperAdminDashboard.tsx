@@ -106,11 +106,20 @@ export function SuperAdminDashboard() {
   const [newCompanyName, setNewCompanyName] = useState('');
   const [newOwnerName, setNewOwnerName] = useState('');
   const [newOwnerPhone, setNewOwnerPhone] = useState('');
-  const [newOwnerEmail, setNewOwnerEmail] = useState('');
   const [newOwnerPassword, setNewOwnerPassword] = useState('');
   const [newOwnerCorridor, setNewOwnerCorridor] = useState('');
   const [ownerError, setOwnerError] = useState<string | null>(null);
   const [isSubmittingOwner, setIsSubmittingOwner] = useState(false);
+
+  const resetOwnerForm = () => {
+    setNewCompanyName('');
+    setNewOwnerName('');
+    setNewOwnerPhone('');
+    setNewOwnerPassword('');
+    setNewOwnerCorridor('');
+    setOwnerError(null);
+    setIsAddOwnerOpen(false);
+  };
   const [createdOwnerSuccess, setCreatedOwnerSuccess] = useState<{
     companyName: string;
     ownerName: string;
@@ -282,11 +291,10 @@ export function SuperAdminDashboard() {
     const companyName = newCompanyName.trim();
     const ownerName = newOwnerName.trim();
     const phone = newOwnerPhone.trim();
-    const email = newOwnerEmail.trim().toLowerCase();
     const password = newOwnerPassword.trim();
 
-    if (!companyName || !ownerName || !phone || !email || !password) {
-      setOwnerError('All fields including initial password are required.');
+    if (!companyName || !ownerName || !phone || !password) {
+      setOwnerError('Company name, owner name, mobile number, and initial password are required.');
       return;
     }
 
@@ -306,19 +314,12 @@ export function SuperAdminDashboard() {
         companyName,
         ownerName,
         phone,
-        email,
         password,
         corridor: newOwnerCorridor.trim(),
       });
 
-      setNewCompanyName('');
-      setNewOwnerName('');
-      setNewOwnerPhone('');
-      setNewOwnerEmail('');
-      setNewOwnerPassword('');
-      setNewOwnerCorridor('');
-      setOwnerError(null);
-      setIsAddOwnerOpen(false);
+      // Clear and blank all fields immediately
+      resetOwnerForm();
 
       const data = result?.data;
       const smsSent = data?.sms?.sent ?? false;
@@ -795,6 +796,7 @@ export function SuperAdminDashboard() {
                 type="button"
                 onClick={() => {
                   setActiveTab('OWNERS');
+                  resetOwnerForm();
                   setIsAddOwnerOpen(true);
                 }}
                 style={{
@@ -941,7 +943,7 @@ export function SuperAdminDashboard() {
 
                   <button
                     type="button"
-                    onClick={() => setIsAddOwnerOpen(true)}
+                    onClick={() => { resetOwnerForm(); setIsAddOwnerOpen(true); }}
                     style={{
                       padding: '12px 22px',
                       background: 'linear-gradient(135deg, #a855f7 0%, #6b21a8 100%)',
@@ -1057,7 +1059,7 @@ export function SuperAdminDashboard() {
                   <div style={{ background: 'rgba(10, 18, 26, 0.98)', border: '1.5px solid #a855f7', borderRadius: 20, padding: 24, boxShadow: '0 20px 45px rgba(0,0,0,0.8)' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
                       <strong style={{ fontSize: 17, color: '#c084fc' }}>Register New Transport Company & Owner Account</strong>
-                      <button type="button" onClick={() => { setIsAddOwnerOpen(false); setOwnerError(null); }} style={{ background: 'none', border: 'none', color: '#94a3b8', fontSize: 18, cursor: 'pointer' }}>✕</button>
+                      <button type="button" onClick={resetOwnerForm} style={{ background: 'none', border: 'none', color: '#94a3b8', fontSize: 18, cursor: 'pointer' }}>✕</button>
                     </div>
 
                     {ownerError && (
@@ -1099,13 +1101,6 @@ export function SuperAdminDashboard() {
                           <input type="tel" value={newOwnerPhone} onChange={(e) => setNewOwnerPhone(e.target.value)} placeholder="10-digit mobile number" required style={{ width: '100%', padding: '11px 14px', background: 'rgba(5,10,15,0.8)', border: '1px solid rgba(255,255,255,0.15)', borderRadius: 10, color: '#ffffff', outline: 'none' }} />
                         </div>
                         <div>
-                          <label style={{ display: 'block', fontSize: 11, fontWeight: 700, color: '#94a3b8', marginBottom: 4 }}>EMAIL ADDRESS *</label>
-                          <input type="email" value={newOwnerEmail} onChange={(e) => setNewOwnerEmail(e.target.value)} placeholder="owner@company.com" required style={{ width: '100%', padding: '11px 14px', background: 'rgba(5,10,15,0.8)', border: '1px solid rgba(255,255,255,0.15)', borderRadius: 10, color: '#ffffff', outline: 'none' }} />
-                        </div>
-                      </div>
-
-                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
-                        <div>
                           <label style={{ display: 'block', fontSize: 11, fontWeight: 700, color: '#94a3b8', marginBottom: 4 }}>INITIAL PASSWORD (FOR OWNER LOGIN) *</label>
                           <input
                             type="password"
@@ -1117,10 +1112,11 @@ export function SuperAdminDashboard() {
                             style={{ width: '100%', padding: '11px 14px', background: 'rgba(5,10,15,0.8)', border: '1px solid rgba(255,255,255,0.15)', borderRadius: 10, color: '#ffffff', outline: 'none' }}
                           />
                         </div>
-                        <div>
-                          <label style={{ display: 'block', fontSize: 11, fontWeight: 700, color: '#94a3b8', marginBottom: 4 }}>PRIMARY OPERATING CORRIDOR</label>
-                          <input type="text" value={newOwnerCorridor} onChange={(e) => setNewOwnerCorridor(e.target.value)} placeholder="e.g. Origin ↔ Destination" style={{ width: '100%', padding: '11px 14px', background: 'rgba(5,10,15,0.8)', border: '1px solid rgba(255,255,255,0.15)', borderRadius: 10, color: '#ffffff', outline: 'none' }} />
-                        </div>
+                      </div>
+
+                      <div>
+                        <label style={{ display: 'block', fontSize: 11, fontWeight: 700, color: '#94a3b8', marginBottom: 4 }}>PRIMARY OPERATING CORRIDOR</label>
+                        <input type="text" value={newOwnerCorridor} onChange={(e) => setNewOwnerCorridor(e.target.value)} placeholder="e.g. Origin ↔ Destination" style={{ width: '100%', padding: '11px 14px', background: 'rgba(5,10,15,0.8)', border: '1px solid rgba(255,255,255,0.15)', borderRadius: 10, color: '#ffffff', outline: 'none' }} />
                       </div>
 
                       <div style={{ display: 'flex', gap: 10, marginTop: 8 }}>
@@ -1142,7 +1138,7 @@ export function SuperAdminDashboard() {
                         </button>
                         <button
                           type="button"
-                          onClick={() => { setIsAddOwnerOpen(false); setOwnerError(null); }}
+                          onClick={resetOwnerForm}
                           style={{
                             padding: '13px 20px',
                             background: 'rgba(255,255,255,0.08)',

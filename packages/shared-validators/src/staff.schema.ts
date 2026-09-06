@@ -61,7 +61,7 @@ export const createOperatorSchema = z.object({
   phone: z
     .string()
     .regex(/^[6-9]\d{9}$/, 'Invalid Indian mobile number (must be 10 digits starting with 6-9)'),
-  email: z.string().email('Invalid email address').toLowerCase().trim(),
+  email: z.string().email('Invalid email address').toLowerCase().trim().optional(),
   password: z
     .string()
     .min(8, 'Password must be at least 8 characters long')
