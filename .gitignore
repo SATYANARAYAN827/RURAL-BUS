@@ -17,10 +17,10 @@ coverage/
 *.tsbuildinfo
 
 # Android & Mobile Build Artifacts
-android/
 **/android/build/
 **/android/app/build/
 **/.gradle/
+**/local.properties
 *.apk
 *.ap_
 *.aab
