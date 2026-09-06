@@ -1,0 +1,10 @@
+packages:
+  - 'apps/*'
+  - 'packages/*'
+
+onlyBuiltDependencies:
+  - esbuild
+  - turbo
+  - drizzle-kit
+  - argon2
+  - '@node-rs/argon2'

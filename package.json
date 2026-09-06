@@ -1,0 +1,26 @@
+{
+  "name": "ruralbus-monorepo",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@11.24.0",
+  "scripts": {
+    "build": "turbo run build",
+    "test": "turbo run test",
+    "dev": "turbo run dev --parallel",
+    "lint": "turbo run lint",
+    "typecheck": "turbo run typecheck",
+    "clean": "turbo run clean && rimraf node_modules",
+    "db:generate": "pnpm --filter @ruralbus/database db:generate",
+    "db:migrate": "pnpm --filter @ruralbus/database db:migrate",
+    "db:seed": "pnpm --filter @ruralbus/database db:seed",
+    "db:studio": "pnpm --filter @ruralbus/database db:studio"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.5",
+    "prettier": "^3.5.0",
+    "puppeteer-core": "^25.10.0",
+    "rimraf": "^6.0.1",
+    "turbo": "^2.4.4",
+    "typescript": "^5.7.3"
+  }
+}

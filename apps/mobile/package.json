@@ -1,0 +1,30 @@
+{
+  "name": "@ruralbus/mobile",
+  "version": "0.1.0",
+  "private": true,
+  "main": "index.js",
+  "scripts": {
+    "start": "react-native start",
+    "android": "react-native run-android",
+    "ios": "react-native run-ios",
+    "build": "tsc",
+    "clean": "rimraf dist",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@ruralbus/shared-types": "workspace:*",
+    "@ruralbus/shared-validators": "workspace:*",
+    "@ruralbus/ui": "workspace:*",
+    "axios": "^1.7.9",
+    "react": "^19.0.0",
+    "zustand": "^5.0.3"
+  },
+  "devDependencies": {
+    "@ruralbus/shared-config": "workspace:*",
+    "@types/react": "^19.0.10",
+    "rimraf": "^6.0.1",
+    "typescript": "^5.7.3",
+    "vitest": "^3.0.7"
+  }
+}
