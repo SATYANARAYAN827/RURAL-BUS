@@ -29,7 +29,7 @@ export interface AdminAuthState {
   initialize: () => Promise<void>;
   login: (input: LoginInput) => Promise<void>;
   register: (input: RegisterInput) => Promise<void>;
-  loginAsDemo: (role: 'PASSENGER' | 'DRIVER' | 'CONDUCTOR' | 'OPERATOR_ADMIN' | 'PLATFORM_ADMIN') => Promise<void>;
+  loginAsDemo?: never;
   logout: () => Promise<void>;
   requestOtp: (phone: string, purpose?: 'FIRST_LOGIN_VERIFICATION' | 'PASSWORD_RESET' | 'REGISTRATION') => Promise<{ success: boolean; message: string; expiresInSeconds: number; simulatedOtp?: string }>;
   verifyOtp: (phone: string, otp: string, purpose?: 'FIRST_LOGIN_VERIFICATION' | 'PASSWORD_RESET' | 'REGISTRATION') => Promise<{ success: boolean; message: string; resetToken?: string; phoneVerified?: boolean }>;
@@ -218,18 +218,6 @@ export const useAdminAuthStore = create<AdminAuthState>((set, get) => ({
     }
   },
 
-  loginAsDemo: async (role: 'PASSENGER' | 'DRIVER' | 'CONDUCTOR' | 'OPERATOR_ADMIN' | 'PLATFORM_ADMIN') => {
-    const demoPhones: Record<typeof role, string> = {
-      PASSENGER: '9876500001',
-      OPERATOR_ADMIN: '9876500002',
-      PLATFORM_ADMIN: '9876500000',
-      DRIVER: '9876543210',
-      CONDUCTOR: '9876500004',
-    };
-
-    const phone = demoPhones[role];
-    await get().login({ identifier: phone, password: 'Password123!' });
-  },
 
   logout: async () => {
     const { tokens } = get();

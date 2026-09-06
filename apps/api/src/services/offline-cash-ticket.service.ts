@@ -44,9 +44,19 @@ export async function syncOfflineCashTicketBatch(
 
   return withTenant(tenantId, async (tx) => {
     // 1. Verify trip exists and belongs to tenant
-    const [trip] = await tx.select().from(trips).where(eq(trips.id, tripId));
+    const [trip] = await tx.select().from(trips).where(and(eq(trips.id, tripId), eq(trips.tenantId, tenantId)));
     if (!trip) {
+      const [anyTrip] = await withSystemContext(async (sysTx) => {
+        return sysTx.select({ id: trips.id }).from(trips).where(eq(trips.id, tripId)).limit(1);
+      });
+      if (anyTrip) {
+        throw new ForbiddenError('You are not authorized to sync offline tickets for this trip');
+      }
       throw new NotFoundError('Trip not found or does not belong to your operator');
+    }
+
+    if (trip.conductorId && trip.conductorId !== conductorUserId) {
+      throw new ForbiddenError('You are not the designated conductor for this trip');
     }
 
     const processedTickets: OfflineCashTicketBatchSyncResponse['processedTickets'] = [];
@@ -136,7 +146,8 @@ export async function syncOfflineCashTicketBatch(
 
 export async function getConductorCashSettlementReport(
   tenantId: string,
-  tripId: string
+  tripId: string,
+  conductorUserId?: string
 ): Promise<ConductorCashSettlementReport> {
   return withTenant(tenantId, async (tx) => {
     // 1. Fetch Trip details
@@ -148,10 +159,20 @@ export async function getConductorCashSettlementReport(
         busId: trips.busId,
       })
       .from(trips)
-      .where(eq(trips.id, tripId));
+      .where(and(eq(trips.id, tripId), eq(trips.tenantId, tenantId)));
 
     if (!trip) {
+      const [anyTrip] = await withSystemContext(async (sysTx) => {
+        return sysTx.select({ id: trips.id }).from(trips).where(eq(trips.id, tripId)).limit(1);
+      });
+      if (anyTrip) {
+        throw new ForbiddenError('You are not authorized to view cash settlement for this trip');
+      }
       throw new NotFoundError('Trip not found');
+    }
+
+    if (conductorUserId && trip.conductorId && trip.conductorId !== conductorUserId) {
+      throw new ForbiddenError('You are not the designated conductor for this trip');
     }
 
     // 2. Fetch Route, Bus, Operator, and Conductor info

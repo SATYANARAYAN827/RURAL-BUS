@@ -6,6 +6,7 @@ import { TopHeader } from '../components/layout/TopHeader.js';
 import { useThemeStore } from '../stores/theme.store.js';
 import { LogoutConfirmModal } from '../components/LogoutConfirmModal.js';
 
+
 type DriverNavTab = 'HOME' | 'MAP' | 'STOPS' | 'HISTORY' | 'PROFILE';
 
 export interface CorridorStop {
@@ -44,6 +45,29 @@ export function DriverApp() {
   const [activeTab, setActiveTab] = useState<DriverNavTab>('HOME');
   const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
   const [isLogoutConfirmOpen, setIsLogoutConfirmOpen] = useState(false);
+
+  // Modal: Select Bus & Start Duty Run
+  const [isSelectBusModalOpen, setIsSelectBusModalOpen] = useState(false);
+  const [selectedBusRegToStart, setSelectedBusRegToStart] = useState('');
+  const [availableBuses, setAvailableBuses] = useState<{ id: string; reg: string; name: string; route?: string; seats: number }[]>([]);
+
+  const loadAvailableBuses = useCallback(async () => {
+    try {
+      const res = await apiClient.get('/api/v1/operator/buses').catch(() => null);
+      const busList = res?.data?.buses || [];
+      const mapped = busList.map((b: any) => ({
+        id: b.id,
+        reg: b.registrationNumber || b.reg,
+        name: b.model || b.name || 'Commercial Bus',
+        route: b.route || 'Rural Service Route',
+        seats: b.totalSeats || b.seats || 40,
+      }));
+      setAvailableBuses(mapped);
+      if (mapped.length > 0) {
+        setSelectedBusRegToStart(mapped[0].reg);
+      }
+    } catch {}
+  }, []);
 
   // Trip Lifecycle State
   const [tripStatus, setTripStatus] = useState<'SCHEDULED' | 'IN_TRANSIT' | 'COMPLETED'>('SCHEDULED');
@@ -132,7 +156,7 @@ export function DriverApp() {
           setNextStop('');
         }
       } else {
-        // Honest empty state when no active trip is assigned
+        // No active duty found via API — show honest empty state
         setActiveTripId('');
         setBusDetails(null);
         setStopsList([]);
@@ -141,6 +165,7 @@ export function DriverApp() {
         setIsGpsActive(false);
         setSpeed(0);
       }
+
 
       // Load completed history
       const histRes = await apiClient.get('/api/v1/driver/history').catch(() => null);
@@ -159,10 +184,17 @@ export function DriverApp() {
         setTripHistory(historyData);
       }
     } catch {}
-  }, []);
+  }, [user]);
 
   useEffect(() => {
     loadDriverDuty();
+    const handleUpdate = () => loadDriverDuty();
+    window.addEventListener('ruralbus:buses-updated', handleUpdate);
+    window.addEventListener('ruralbus:staff-updated', handleUpdate);
+    return () => {
+      window.removeEventListener('ruralbus:buses-updated', handleUpdate);
+      window.removeEventListener('ruralbus:staff-updated', handleUpdate);
+    };
   }, [loadDriverDuty]);
 
   // Acquire real device location on mount
@@ -318,27 +350,29 @@ export function DriverApp() {
     return () => clearInterval(interval);
   }, [tripStatus]);
 
-  // 3. START TRIP Action (Activates Real GPS stream & Sets Bus LIVE)
-  const handleStartTrip = async () => {
+  // 3. START TRIP Action (Activates Real GPS stream)
+  const handleStartTrip = async (customBus?: DriverBusDetails) => {
+    const activeBus = customBus || busDetails;
+    if (activeBus) {
+      setBusDetails(activeBus);
+    }
     setTripStatus('IN_TRANSIT');
     setIsGpsActive(true);
     setGpsState('ACQUIRING');
     setTripMinutes(0);
-    setSpeed(0); // real GPS speed will update on first position fix
+    setSpeed(0);
 
+    const currentTripId = activeTripId;
     const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-    if (activeTripId && UUID_REGEX.test(activeTripId)) {
+    if (currentTripId && UUID_REGEX.test(currentTripId)) {
       try {
-        await apiClient.post(`/api/v1/driver/duty/${activeTripId}/start`).catch(() => {
-          return apiClient.post('/api/v1/driver/trip/start', {
-            tripId: activeTripId,
-            busReg: busDetails?.reg || '',
-            startTime: new Date().toISOString(),
-          }).catch(() => {});
-        });
-      } catch {}
+        await apiClient.post(`/api/v1/driver/duty/${currentTripId}/start`);
+      } catch (err) {
+        console.warn('[DriverApp] Start trip API call failed:', err);
+      }
     }
   };
+
 
   // 4. END TRIP Action (Stops GPS & Completes Duty)
   const handleEndTrip = async () => {
@@ -361,15 +395,13 @@ export function DriverApp() {
     const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
     if (activeTripId && UUID_REGEX.test(activeTripId)) {
       try {
-        await apiClient.post(`/api/v1/driver/duty/${activeTripId}/end`).catch(() => {
-          return apiClient.post('/api/v1/driver/trip/end', {
-            tripId: activeTripId,
-            endTime: new Date().toISOString(),
-          }).catch(() => {});
-        });
-      } catch {}
+        await apiClient.post(`/api/v1/driver/duty/${activeTripId}/end`);
+      } catch (err) {
+        console.warn('[DriverApp] End trip API call failed:', err);
+      }
     }
   };
+
 
   // 5. SOS Trigger
   const handleToggleSos = () => {
@@ -718,8 +750,8 @@ export function DriverApp() {
             ) : (
               <div
                 style={{
-                  background: 'rgba(10, 16, 26, 0.85)',
-                  border: '1.5px dashed rgba(255, 255, 255, 0.15)',
+                  background: 'linear-gradient(135deg, rgba(15, 23, 42, 0.95) 0%, rgba(30, 41, 59, 0.9) 100%)',
+                  border: '1.5px dashed rgba(0, 212, 136, 0.4)',
                   borderRadius: 20,
                   padding: '24px',
                   display: 'flex',
@@ -727,38 +759,65 @@ export function DriverApp() {
                   justifyContent: 'space-between',
                   flexWrap: 'wrap',
                   gap: 16,
+                  boxShadow: '0 10px 30px rgba(0,0,0,0.4)',
                 }}
               >
                 <div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                    <span style={{ fontSize: 20, fontWeight: 900, color: '#94a3b8' }}>No Bus Assigned</span>
-                    <span style={{ background: 'rgba(255, 255, 255, 0.1)', color: '#94a3b8', fontSize: 11, fontWeight: 800, padding: '3px 10px', borderRadius: 9999 }}>
-                      STANDBY
+                    <span style={{ fontSize: 20, fontWeight: 900, color: '#ffffff' }}>No Bus Assigned Yet</span>
+                    <span style={{ background: 'rgba(0, 212, 136, 0.15)', color: '#00D488', fontSize: 11, fontWeight: 800, padding: '3px 10px', borderRadius: 9999 }}>
+                      READY FOR DUTY
                     </span>
                   </div>
-                  <div style={{ fontSize: 13, color: '#64748b', marginTop: 4 }}>
-                    No active commercial duty or vehicle currently assigned to your account in the database.
+                  <div style={{ fontSize: 13, color: '#94a3b8', marginTop: 4 }}>
+                    Select an available vehicle from your company fleet to start your commercial route run.
                   </div>
-                  <div style={{ fontSize: 12, color: '#38bdf8', marginTop: 6 }}>
-                    Contact your fleet dispatcher to receive an assigned route duty.
+                  <div style={{ fontSize: 12, color: '#38bdf8', marginTop: 4 }}>
+                    Or ask your dispatcher to allocate a bus to your profile.
                   </div>
                 </div>
-                <button
-                  type="button"
-                  onClick={loadDriverDuty}
-                  style={{
-                    padding: '10px 18px',
-                    background: 'rgba(0, 212, 136, 0.12)',
-                    border: '1px solid #00D488',
-                    borderRadius: 10,
-                    color: '#00D488',
-                    fontSize: 13,
-                    fontWeight: 700,
-                    cursor: 'pointer',
-                  }}
-                >
-                  ↻ Refresh Duty
-                </button>
+                <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      loadAvailableBuses();
+                      setIsSelectBusModalOpen(true);
+                    }}
+                    style={{
+                      padding: '12px 20px',
+                      background: 'linear-gradient(135deg, #00B87A 0%, #00875A 100%)',
+                      border: 'none',
+                      borderRadius: 12,
+                      color: '#ffffff',
+                      fontSize: 13,
+                      fontWeight: 800,
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 8,
+                      boxShadow: '0 4px 15px rgba(0, 184, 122, 0.35)',
+                    }}
+                  >
+                    <span>▶</span>
+                    <span>Select Bus & Start Trip</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={loadDriverDuty}
+                    style={{
+                      padding: '12px 18px',
+                      background: 'rgba(255, 255, 255, 0.08)',
+                      border: '1px solid rgba(255, 255, 255, 0.15)',
+                      borderRadius: 12,
+                      color: '#cbd5e1',
+                      fontSize: 13,
+                      fontWeight: 700,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    ↻ Refresh Duty
+                  </button>
+                </div>
               </div>
             )}
 
@@ -807,32 +866,36 @@ export function DriverApp() {
 
             {/* Primary Action Buttons (Large Touch Targets for Drivers) */}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 14, marginTop: 6 }}>
-              {!busDetails || !activeTripId ? (
+              {!busDetails ? (
                 <button
                   type="button"
-                  disabled
+                  onClick={() => {
+                    loadAvailableBuses();
+                    setIsSelectBusModalOpen(true);
+                  }}
                   style={{
                     padding: '20px',
-                    background: 'rgba(255, 255, 255, 0.05)',
-                    color: '#64748b',
-                    fontSize: '1.15rem',
-                    fontWeight: 800,
+                    background: 'linear-gradient(135deg, #00B87A 0%, #00875A 100%)',
+                    color: '#ffffff',
+                    fontSize: '1.25rem',
+                    fontWeight: 900,
                     borderRadius: 16,
-                    cursor: 'not-allowed',
-                    border: '1px dashed rgba(255, 255, 255, 0.1)',
+                    cursor: 'pointer',
+                    border: 'none',
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
                     gap: 12,
+                    boxShadow: '0 6px 25px rgba(0, 184, 122, 0.4)',
                   }}
                 >
-                  <span>⏳</span>
-                  <span>NO ACTIVE TRIP ASSIGNED (STANDBY)</span>
+                  <span style={{ fontSize: 24 }}>▶</span>
+                  <span>START TRIP / SELECT BUS</span>
                 </button>
               ) : tripStatus !== 'IN_TRANSIT' ? (
                 <button
                   type="button"
-                  onClick={handleStartTrip}
+                  onClick={() => handleStartTrip()}
                   style={{
                     padding: '20px',
                     background: 'linear-gradient(135deg, #00B87A 0%, #00875A 100%)',
@@ -1195,6 +1258,166 @@ export function DriverApp() {
                 <span>🚪</span>
                 <span>Log Out of Duty</span>
               </button>
+            </div>
+          </div>
+        )}
+
+        {/* ══ MODAL: DRIVER SELECT BUS & START TRIP ══ */}
+        {isSelectBusModalOpen && (
+          <div
+            style={{
+              position: 'fixed',
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              background: 'rgba(0,0,0,0.8)',
+              backdropFilter: 'blur(8px)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              zIndex: 9999,
+              padding: 16,
+            }}
+          >
+            <div
+              style={{
+                background: 'rgba(10, 18, 26, 0.98)',
+                border: '1.5px solid #00D488',
+                borderRadius: 20,
+                padding: 24,
+                width: '100%',
+                maxWidth: 500,
+                boxShadow: '0 20px 45px rgba(0,0,0,0.8)',
+              }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+                <div>
+                  <strong style={{ fontSize: 18, color: '#00D488' }}>
+                    Select Bus & Start Commercial Run
+                  </strong>
+                  <div style={{ fontSize: 12, color: '#94a3b8', marginTop: 2 }}>
+                    Driver: <strong>{user?.fullName || 'Transit Driver'}</strong>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsSelectBusModalOpen(false)}
+                  style={{ background: 'none', border: 'none', color: '#94a3b8', fontSize: 20, cursor: 'pointer' }}
+                >
+                  ✕
+                </button>
+              </div>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 16, marginTop: 16 }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: 11, fontWeight: 700, color: '#cbd5e1', marginBottom: 6 }}>
+                    SELECT FLEET VEHICLE FOR TODAY'S RUN
+                  </label>
+                  <select
+                    value={selectedBusRegToStart}
+                    onChange={(e) => setSelectedBusRegToStart(e.target.value)}
+                    style={{
+                      width: '100%',
+                      padding: '12px 14px',
+                      background: '#050a0f',
+                      border: '1.5px solid rgba(255,255,255,0.2)',
+                      borderRadius: 10,
+                      color: '#ffffff',
+                      fontSize: 14,
+                      fontWeight: 700,
+                      outline: 'none',
+                    }}
+                  >
+                    {availableBuses.length === 0 ? (
+                      <option value="">No commercial buses registered yet</option>
+                    ) : (
+                      availableBuses.map((b) => (
+                        <option key={b.id} value={b.reg}>
+                          {b.reg} — {b.name} ({b.route || 'Corridor'})
+                        </option>
+                      ))
+                    )}
+                  </select>
+                </div>
+
+                {(() => {
+                  const chosen = availableBuses.find((b) => b.reg === selectedBusRegToStart) || availableBuses[0];
+                  if (!chosen) return null;
+                  return (
+                    <div style={{ background: 'rgba(255,255,255,0.04)', borderRadius: 12, padding: 14, border: '1px solid rgba(255,255,255,0.08)' }}>
+                      <div style={{ fontSize: 12, color: '#94a3b8' }}>Corridor Route:</div>
+                      <div style={{ fontSize: 14, fontWeight: 800, color: '#00D488', marginTop: 2 }}>{chosen.route || 'State Rural Transit Corridor'}</div>
+                      <div style={{ fontSize: 12, color: '#94a3b8', marginTop: 8 }}>Vehicle Details:</div>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: '#ffffff' }}>{chosen.name} ({chosen.reg}) · {chosen.seats} Seats</div>
+                    </div>
+                  );
+                })()}
+
+                <div style={{ padding: '10px 12px', background: 'rgba(0, 212, 136, 0.1)', border: '1px solid rgba(0, 212, 136, 0.25)', borderRadius: 10, fontSize: 11, color: '#00D488' }}>
+                  ✓ Starting this trip immediately activates live telemetry, speedometer HUD, and transmits radar pings so dispatch and passengers can track your transit bus.
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 24 }}>
+                <button
+                  type="button"
+                  onClick={() => setIsSelectBusModalOpen(false)}
+                  style={{
+                    padding: '10px 18px',
+                    background: 'transparent',
+                    border: '1px solid rgba(255,255,255,0.2)',
+                    borderRadius: 10,
+                    color: '#94a3b8',
+                    cursor: 'pointer',
+                    fontWeight: 700,
+                  }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    const chosen = availableBuses.find((b) => b.reg === selectedBusRegToStart) || availableBuses[0];
+                    if (chosen) {
+                      const newDetails: DriverBusDetails = {
+                        name: chosen.name,
+                        reg: chosen.reg,
+                        route: chosen.route || 'State Rural Highway Corridor',
+                        routeCode: 'RURAL-EXP-01',
+                      };
+                      setBusDetails(newDetails);
+                      setTotalSeats(chosen.seats || 40);
+
+                      try {
+                        const dispatchRes = await apiClient.post('/api/v1/operator/trips/dispatch', {
+                          busId: chosen.id,
+                          driverId: user?.id,
+                        }).catch(() => null);
+                        const tripId = dispatchRes?.data?.data?.tripId || dispatchRes?.data?.trip?.id || `TRIP-${chosen.reg}`;
+                        setActiveTripId(tripId);
+                      } catch {
+                        setActiveTripId(`TRIP-${chosen.reg}`);
+                      }
+
+                      handleStartTrip(newDetails);
+                    }
+                    setIsSelectBusModalOpen(false);
+                  }}
+                  style={{
+                    padding: '10px 22px',
+                    background: 'linear-gradient(135deg, #00B87A 0%, #00875A 100%)',
+                    border: 'none',
+                    borderRadius: 10,
+                    color: '#ffffff',
+                    fontWeight: 900,
+                    cursor: 'pointer',
+                    boxShadow: '0 4px 15px rgba(0, 184, 122, 0.4)',
+                  }}
+                >
+                  Start Trip Run
+                </button>
+              </div>
             </div>
           </div>
         )}

@@ -1023,7 +1023,16 @@ export function LoginView() {
                 {t.createAccount}
               </button>
             </div>
+
+
+            {/* First-time login hint */}
+            <div style={{ textAlign: 'center', marginTop: 8 }}>
+              <span style={{ fontSize: 11, color: isLight ? '#64748b' : '#94a3b8' }}>
+                First time? Use the temporary password sent to your mobile via SMS.
+              </span>
+            </div>
           </form>
+
         ) : !isOtpStep ? (
           /* ── Registration Step 1 ── */
           <form onSubmit={handleSendOtp} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>

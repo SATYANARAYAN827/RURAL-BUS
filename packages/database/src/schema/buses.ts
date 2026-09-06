@@ -1,7 +1,7 @@
 import { pgTable, uuid, varchar, integer, timestamp, pgEnum, jsonb, index, unique } from 'drizzle-orm/pg-core';
 import { operators } from './operators.js';
 
-export const busStatusEnum = pgEnum('bus_status', ['ACTIVE', 'MAINTENANCE', 'DECOMMISSIONED']);
+export const busStatusEnum = pgEnum('bus_status', ['PENDING_APPROVAL', 'ACTIVE', 'MAINTENANCE', 'DECOMMISSIONED']);
 export const seatingTypeEnum = pgEnum('seating_type', ['SEATER_2X2', 'SEATER_3X2', 'SLEEPER', 'SEMI_SLEEPER']);
 
 export const buses = pgTable(

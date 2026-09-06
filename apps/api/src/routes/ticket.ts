@@ -55,11 +55,11 @@ export async function ticketRoutes(app: FastifyInstance) {
       onRequest: [app.authenticate, requireRole(['CONDUCTOR', 'OPERATOR_ADMIN'])],
     },
     async (request, reply) => {
-      const conductorUserId = request.user!.sub;
+      const conductorUserId = request.user!.role === 'CONDUCTOR' ? request.user!.sub : undefined;
       const tenantId = request.user!.tenantId!;
       const { tripId } = tripManifestParamSchema.parse(request.params);
 
-      const manifest = await getOfflineConductorManifest(tenantId, tripId);
+      const manifest = await getOfflineConductorManifest(tenantId, tripId, conductorUserId);
       return reply.code(200).send({
         success: true,
         data: manifest,

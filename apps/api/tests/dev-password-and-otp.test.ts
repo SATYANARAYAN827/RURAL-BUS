@@ -13,6 +13,18 @@ describe('RuralBus Development Password Visibility & OTP Flow Integration Tests'
   beforeAll(async () => {
     app = await buildServer();
     await app.ready();
+
+    // Ensure test passenger user exists for OTP tests
+    await db.insert(schema.users).values({
+      fullName: 'Rajesh Sharma',
+      email: 'rajesh.passenger@ruralbus.com',
+      phone: '9876500001',
+      role: 'PASSENGER',
+      passwordHash: '$argon2id$v=19$m=65536,t=3,p=4$hK5lSeRKF+xm0QpoG1155w$2D8MA2a6EQhW6tM3SmC6F0ns11VmZ3jMOR5Jb1iktXs',
+      developmentPassword: 'Password123!',
+      isActive: true,
+      phoneVerified: true,
+    }).onConflictDoNothing();
   });
 
   afterAll(async () => {

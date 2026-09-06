@@ -256,7 +256,8 @@ export async function validateAndBoardTicket(
  */
 export async function getOfflineConductorManifest(
   conductorTenantId: string,
-  tripId: string
+  tripId: string,
+  conductorUserId?: string
 ): Promise<OfflineManifestSyncResponse> {
   return await withTenant(conductorTenantId, async (tx) => {
     // 1. Fetch trip and bus details
@@ -268,6 +269,7 @@ export async function getOfflineConductorManifest(
         destination: routes.destination,
         busRegistration: buses.registrationNumber,
         totalSeats: buses.totalSeats,
+        conductorId: trips.conductorId,
       })
       .from(trips)
       .innerJoin(routes, eq(trips.routeId, routes.id))
@@ -275,7 +277,17 @@ export async function getOfflineConductorManifest(
       .where(and(eq(trips.id, tripId), eq(trips.tenantId, conductorTenantId)));
 
     if (!trip) {
+      const [anyTrip] = await withSystemContext(async (sysTx) => {
+        return sysTx.select({ id: trips.id }).from(trips).where(eq(trips.id, tripId)).limit(1);
+      });
+      if (anyTrip) {
+        throw new ForbiddenError('You are not authorized to view this trip manifest');
+      }
       throw new NotFoundError('Trip not found or does not belong to your operator');
+    }
+
+    if (conductorUserId && trip.conductorId && trip.conductorId !== conductorUserId) {
+      throw new ForbiddenError('You are not the designated conductor for this trip');
     }
 
     // 2. Fetch all tickets and bookings for this trip

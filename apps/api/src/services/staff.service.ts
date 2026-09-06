@@ -7,6 +7,7 @@ import {
   NotFoundError,
   ConflictError,
   BadRequestError,
+  ForbiddenError,
 } from '../errors/AppError.js';
 import type {
   StaffMember,
@@ -208,7 +209,8 @@ export async function provisionStaffMember(
       })
       .returning();
 
-    return {
+    // 5. Always send SMS credentials to the new staff member
+    const staffResult: StaffMember = {
       id: newMember.id,
       userId: newUser.id,
       fullName: newUser.fullName,
@@ -220,8 +222,31 @@ export async function provisionStaffMember(
       createdAt: newMember.createdAt.toISOString(),
       updatedAt: newMember.updatedAt.toISOString(),
     };
+
+    // Fire SMS outside the transaction scope (don't fail provision on SMS error)
+    setImmediate(async () => {
+      try {
+        await sendAccountProvisioningSms({
+          phone: input.phone,
+          fullName: input.fullName,
+          role: input.role as 'DRIVER' | 'CONDUCTOR',
+          temporaryPassword: input.password,
+          operatorName: tenantId, // Will be resolved in SMS service
+        });
+        console.log(`[Staff] SMS credentials sent to ${input.phone} (${input.role})`);
+      } catch (smsErr: any) {
+        if (process.env.NODE_ENV !== 'production') {
+          console.warn(`[Staff] SMS delivery failed for ${input.phone}: ${smsErr.message}`);
+        } else {
+          console.error(`[Staff] SMS delivery failed for staff ${input.phone}:`, smsErr.message);
+        }
+      }
+    });
+
+    return staffResult;
   });
 }
+
 
 export async function updateStaffStatus(
   tenantId: string,
@@ -242,6 +267,15 @@ export async function updateStaffStatus(
       .limit(1);
 
     if (!member) {
+      const [otherMember] = await tx
+        .select({ id: operatorMembers.id })
+        .from(operatorMembers)
+        .where(eq(operatorMembers.id, staffId))
+        .limit(1);
+
+      if (otherMember) {
+        throw new ForbiddenError('Cannot modify staff belonging to another operator');
+      }
       throw new NotFoundError('Staff member not found in this operator organization');
     }
 
@@ -297,6 +331,15 @@ export async function resetStaffPassword(
       .limit(1);
 
     if (!member) {
+      const [otherMember] = await tx
+        .select({ id: operatorMembers.id })
+        .from(operatorMembers)
+        .where(eq(operatorMembers.id, staffId))
+        .limit(1);
+
+      if (otherMember) {
+        throw new ForbiddenError('Cannot modify staff belonging to another operator');
+      }
       throw new NotFoundError('Staff member not found in this operator organization');
     }
 

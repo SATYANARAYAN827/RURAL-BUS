@@ -1,4 +1,4 @@
-export type BusStatus = 'ACTIVE' | 'MAINTENANCE' | 'DECOMMISSIONED';
+export type BusStatus = 'PENDING_APPROVAL' | 'ACTIVE' | 'MAINTENANCE' | 'DECOMMISSIONED';
 
 export type SeatingType = 'SEATER_2X2' | 'SEATER_3X2' | 'SLEEPER' | 'SEMI_SLEEPER';
 

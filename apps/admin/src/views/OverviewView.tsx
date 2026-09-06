@@ -1,5 +1,6 @@
+import { useState, useEffect } from 'react';
 import { colors, spacing, borderRadius, shadows } from '@ruralbus/ui';
-import { operatorStore } from '../services/operatorStore.service.js';
+import { apiClient } from '../services/api.client.js';
 
 interface StatCardProps {
   label: string;
@@ -50,7 +51,25 @@ function StatCard({ label, value, change, icon }: StatCardProps) {
 }
 
 export function OverviewView() {
-  const buses = operatorStore.getBuses();
+  const [buses, setBuses] = useState<any[]>([]);
+
+  useEffect(() => {
+    apiClient.get('/api/v1/operator/buses')
+      .then((res) => {
+        if (res?.data?.buses) {
+          setBuses(res.data.buses.map((b: any) => ({
+            id: b.id,
+            reg: b.registrationNumber || b.reg,
+            name: b.model || b.name,
+            driver: b.driver || 'Assigned Driver',
+            conductor: b.conductor || 'Assigned Conductor',
+            route: b.route || 'Rural Highway Route',
+            status: b.status,
+          })));
+        }
+      })
+      .catch(() => {});
+  }, []);
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: spacing.lg }}>
       {/* Top Banner */}

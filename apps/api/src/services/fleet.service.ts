@@ -1,4 +1,4 @@
-import { eq, and, ilike, or, sql, desc } from 'drizzle-orm';
+import { eq, and, ilike, or, sql, desc, inArray } from 'drizzle-orm';
 import {
   db,
   withSystemContext,
@@ -15,6 +15,7 @@ import {
   NotFoundError,
   ConflictError,
   BadRequestError,
+  ForbiddenError,
 } from '../errors/AppError.js';
 import type {
   Bus,
@@ -118,10 +119,15 @@ export async function listBuses(
 
 export async function createBus(
   tenantId: string,
-  input: CreateBusInput
+  input: CreateBusInput,
+  callerRole: 'PLATFORM_ADMIN' | 'OPERATOR_ADMIN' = 'PLATFORM_ADMIN'
 ): Promise<Bus> {
   return withSystemContext(async (tx) => {
-    const targetTenantId = input.tenantId || tenantId;
+    // OPERATOR_ADMIN can register a bus ONLY for their own operator organization
+    if (callerRole === 'OPERATOR_ADMIN' && input.tenantId && input.tenantId !== tenantId) {
+      throw new ForbiddenError('Cannot register a bus for another operator');
+    }
+    const targetTenantId = callerRole === 'OPERATOR_ADMIN' ? tenantId : (input.tenantId || tenantId);
     if (!targetTenantId) {
       throw new BadRequestError('Target transport owner/operator is required');
     }
@@ -150,6 +156,11 @@ export async function createBus(
       throw new ConflictError(`An active bus with registration number '${regNum}' already exists in the system`);
     }
 
+    // OPERATOR_ADMIN submissions start as PENDING_APPROVAL; PLATFORM_ADMIN goes directly ACTIVE
+    const initialStatus = callerRole === 'PLATFORM_ADMIN'
+      ? (input.status || 'ACTIVE')
+      : 'PENDING_APPROVAL';
+
     const [newBus] = await tx
       .insert(buses)
       .values({
@@ -158,7 +169,7 @@ export async function createBus(
         model: input.model.trim(),
         totalSeats: input.totalSeats,
         seatingType: input.seatingType || 'SEATER_2X2',
-        status: input.status || 'ACTIVE',
+        status: initialStatus as any,
         amenities: input.amenities || [],
       })
       .returning();
@@ -175,6 +186,165 @@ export async function createBus(
       amenities: newBus.amenities || [],
       createdAt: newBus.createdAt.toISOString(),
       updatedAt: newBus.updatedAt.toISOString(),
+    };
+  });
+}
+
+/**
+ * Super Admin approves a pending bus registration request.
+ * Dedicated operation restricted strictly to PLATFORM_ADMIN.
+ */
+export async function approveBus(
+  busId: string,
+  caller?: { role: string; tenantId?: string | null }
+): Promise<Bus> {
+  if (caller && caller.role !== 'PLATFORM_ADMIN') {
+    throw new ForbiddenError('Only PLATFORM_ADMIN may approve a bus');
+  }
+
+  return withSystemContext(async (tx) => {
+    const [existing] = await tx
+      .select()
+      .from(buses)
+      .where(eq(buses.id, busId))
+      .limit(1);
+
+    if (!existing) {
+      throw new NotFoundError('Bus not found');
+    }
+
+    if (existing.status !== ('PENDING_APPROVAL' as any)) {
+      throw new BadRequestError(`Bus is already '${existing.status}', not pending approval`);
+    }
+
+    const [updated] = await tx
+      .update(buses)
+      .set({ status: 'ACTIVE', updatedAt: new Date() })
+      .where(eq(buses.id, busId))
+      .returning();
+
+    const [op] = await tx
+      .select({ companyName: operators.companyName })
+      .from(operators)
+      .where(eq(operators.id, updated.tenantId))
+      .limit(1);
+
+    console.log(`[Fleet] Bus ${updated.registrationNumber} approved for operator ${op?.companyName}`);
+
+    return {
+      id: updated.id,
+      tenantId: updated.tenantId,
+      operatorName: op?.companyName,
+      registrationNumber: updated.registrationNumber,
+      model: updated.model,
+      totalSeats: updated.totalSeats,
+      seatingType: updated.seatingType as Bus['seatingType'],
+      status: updated.status as Bus['status'],
+      amenities: updated.amenities || [],
+      createdAt: updated.createdAt.toISOString(),
+      updatedAt: updated.updatedAt.toISOString(),
+    };
+  });
+}
+
+/**
+ * Super Admin rejects a pending bus registration request.
+ * Transitions status to DECOMMISSIONED.
+ */
+export async function rejectBus(
+  busId: string,
+  caller?: { role: string; tenantId?: string | null }
+): Promise<Bus> {
+  if (caller && caller.role !== 'PLATFORM_ADMIN') {
+    throw new ForbiddenError('Only PLATFORM_ADMIN may reject a bus');
+  }
+
+  return withSystemContext(async (tx) => {
+    const [existing] = await tx
+      .select()
+      .from(buses)
+      .where(eq(buses.id, busId))
+      .limit(1);
+
+    if (!existing) {
+      throw new NotFoundError('Bus not found');
+    }
+
+    if (existing.status !== ('PENDING_APPROVAL' as any)) {
+      throw new BadRequestError(`Bus is already '${existing.status}', not pending approval`);
+    }
+
+    const [updated] = await tx
+      .update(buses)
+      .set({ status: 'DECOMMISSIONED', updatedAt: new Date() })
+      .where(eq(buses.id, busId))
+      .returning();
+
+    const [op] = await tx
+      .select({ companyName: operators.companyName })
+      .from(operators)
+      .where(eq(operators.id, updated.tenantId))
+      .limit(1);
+
+    return {
+      id: updated.id,
+      tenantId: updated.tenantId,
+      operatorName: op?.companyName,
+      registrationNumber: updated.registrationNumber,
+      model: updated.model,
+      totalSeats: updated.totalSeats,
+      seatingType: updated.seatingType as Bus['seatingType'],
+      status: updated.status as Bus['status'],
+      amenities: updated.amenities || [],
+      createdAt: updated.createdAt.toISOString(),
+      updatedAt: updated.updatedAt.toISOString(),
+    };
+  });
+}
+
+/**
+ * Lists all buses with PENDING_APPROVAL status for super admin review.
+ */
+export async function listPendingBusRequests(): Promise<BusListResponse> {
+  return withSystemContext(async (tx) => {
+    const rows = await tx
+      .select({
+        id: buses.id,
+        tenantId: buses.tenantId,
+        registrationNumber: buses.registrationNumber,
+        model: buses.model,
+        totalSeats: buses.totalSeats,
+        seatingType: buses.seatingType,
+        status: buses.status,
+        amenities: buses.amenities,
+        createdAt: buses.createdAt,
+        updatedAt: buses.updatedAt,
+        operatorName: operators.companyName,
+      })
+      .from(buses)
+      .leftJoin(operators, eq(buses.tenantId, operators.id))
+      .where(eq(buses.status, 'PENDING_APPROVAL' as any))
+      .orderBy(desc(buses.createdAt));
+
+    const busList: Bus[] = rows.map((r) => ({
+      id: r.id,
+      tenantId: r.tenantId,
+      operatorName: r.operatorName || undefined,
+      registrationNumber: r.registrationNumber,
+      model: r.model,
+      totalSeats: r.totalSeats,
+      seatingType: r.seatingType as Bus['seatingType'],
+      status: r.status as Bus['status'],
+      amenities: r.amenities || [],
+      createdAt: r.createdAt.toISOString(),
+      updatedAt: r.updatedAt.toISOString(),
+    }));
+
+    return {
+      buses: busList,
+      total: busList.length,
+      activeCount: 0,
+      maintenanceCount: 0,
     };
   });
 }
@@ -197,7 +367,23 @@ export async function updateBus(
       .limit(1);
 
     if (!existing) {
+      if (!isSuperAdmin) {
+        const [otherBus] = await tx
+          .select({ id: buses.id })
+          .from(buses)
+          .where(eq(buses.id, busId))
+          .limit(1);
+
+        if (otherBus) {
+          throw new ForbiddenError('Cannot access or mutate a bus belonging to another operator');
+        }
+      }
       throw new NotFoundError('Bus not found in your fleet');
+    }
+
+    // Protection against unauthorized bus activation: only PLATFORM_ADMIN can transition to ACTIVE
+    if (!isSuperAdmin && input.status === 'ACTIVE' && existing.status !== 'ACTIVE') {
+      throw new ForbiddenError('Only PLATFORM_ADMIN may approve buses');
     }
 
     const targetReg = (input.registrationNumber ? input.registrationNumber.toUpperCase().trim() : existing.registrationNumber);
@@ -269,6 +455,17 @@ export async function deleteBus(
       .limit(1);
 
     if (!existing) {
+      if (!isSuperAdmin) {
+        const [otherBus] = await tx
+          .select({ id: buses.id })
+          .from(buses)
+          .where(eq(buses.id, busId))
+          .limit(1);
+
+        if (otherBus) {
+          throw new ForbiddenError('Cannot access or mutate a bus belonging to another operator');
+        }
+      }
       throw new NotFoundError('Bus not found in your fleet');
     }
 
@@ -1014,14 +1211,27 @@ export async function dispatchTrip(
       .limit(1);
 
     if (!bus) {
+      const [otherBus] = await tx
+        .select({ id: buses.id })
+        .from(buses)
+        .where(eq(buses.id, input.busId))
+        .limit(1);
+
+      if (otherBus) {
+        throw new ForbiddenError('Cannot dispatch a bus belonging to another operator');
+      }
       throw new NotFoundError('Bus not found in your fleet');
+    }
+
+    if ((bus.status as string) === 'PENDING_APPROVAL') {
+      throw new BadRequestError(`Bus '${bus.registrationNumber}' is pending approval and cannot be dispatched`);
     }
 
     if (bus.status !== 'ACTIVE') {
       throw new BadRequestError(`Bus '${bus.registrationNumber}' is not in ACTIVE status (current: ${bus.status})`);
     }
 
-    // 3. Verify Driver tenancy if assigned
+    // 3. Verify Driver tenancy if assigned (before active trip checks)
     let driverUser: { fullName: string; phone: string | null } | null = null;
     if (input.driverId) {
       const [member] = await tx
@@ -1037,6 +1247,22 @@ export async function dispatchTrip(
 
       if (!member || member.role !== 'DRIVER') {
         throw new BadRequestError('Assigned driver must be an active driver for this operator');
+      }
+
+      // Check if driver already has an active trip
+      const [activeDriverTrip] = await tx
+        .select({ id: trips.id })
+        .from(trips)
+        .where(
+          and(
+            eq(trips.driverId, input.driverId),
+            inArray(trips.status, ['SCHEDULED', 'BOARDING', 'IN_TRANSIT', 'DELAYED'])
+          )
+        )
+        .limit(1);
+
+      if (activeDriverTrip) {
+        throw new ConflictError(`Driver already has an active trip in progress (${activeDriverTrip.id})`);
       }
 
       const [u] = await tx
@@ -1073,7 +1299,23 @@ export async function dispatchTrip(
       conductorUser = u || null;
     }
 
-    // 5. Insert Trip
+    // 5. Check if bus already has an active trip
+    const [activeBusTrip] = await tx
+      .select({ id: trips.id })
+      .from(trips)
+      .where(
+        and(
+          eq(trips.busId, input.busId),
+          inArray(trips.status, ['SCHEDULED', 'BOARDING', 'IN_TRANSIT', 'DELAYED'])
+        )
+      )
+      .limit(1);
+
+    if (activeBusTrip) {
+      throw new ConflictError(`Bus '${bus.registrationNumber}' already has an active trip in progress (${activeBusTrip.id})`);
+    }
+
+    // 6. Insert Trip
     const [newTrip] = await tx
       .insert(trips)
       .values({

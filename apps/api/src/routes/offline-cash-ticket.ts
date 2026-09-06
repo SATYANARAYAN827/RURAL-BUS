@@ -58,7 +58,8 @@ export async function offlineCashTicketRoutes(app: FastifyInstance) {
       const tenantId = request.user!.tenantId!;
       const { tripId } = conductorCashSettlementParamSchema.parse(request.params);
 
-      const report = await getConductorCashSettlementReport(tenantId, tripId);
+      const conductorUserId = request.user!.role === 'CONDUCTOR' ? request.user!.sub : undefined;
+      const report = await getConductorCashSettlementReport(tenantId, tripId, conductorUserId);
       return reply.code(200).send({
         success: true,
         data: report,

@@ -209,7 +209,7 @@ describe('Phase 9: Fleet, Route, Stop & Timetable Scheduling Integration Tests',
   // 1. Bus Fleet Tests
   // ==========================================
   describe('Bus Fleet Management', () => {
-    it('should forbid OPERATOR_ADMIN from creating a bus (403 Forbidden)', async () => {
+    it('should allow OPERATOR_ADMIN to submit a bus registration request (201 Created with PENDING_APPROVAL)', async () => {
       const response = await app.inject({
         method: 'POST',
         url: '/api/v1/operator/buses',
@@ -222,7 +222,10 @@ describe('Phase 9: Fleet, Route, Stop & Timetable Scheduling Integration Tests',
         },
       });
 
-      expect(response.statusCode).toBe(403);
+      expect(response.statusCode).toBe(201);
+      const json = response.json();
+      expect(json.success).toBe(true);
+      expect(json.data.bus.status).toBe('PENDING_APPROVAL');
     });
 
     it('should allow PLATFORM_ADMIN (Super Admin) to register a new bus in active fleet (201 Created)', async () => {

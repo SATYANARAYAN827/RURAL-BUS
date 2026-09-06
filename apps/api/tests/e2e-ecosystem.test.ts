@@ -157,6 +157,7 @@ describe('Phase 18: Complete Localhost Multi-Role End-to-End Ecosystem Rehearsal
   describe('Full Ecosystem Rehearsal Workflow', () => {
     it('Step 1: Operator Admin creates Bus, Stops, Route, and dispatches Trip', async () => {
       // 1a. Operator Admin receives HTTP 403 Forbidden (Strict Super Admin creation rule)
+      // 1a. Operator Admin creates Bus (starts as PENDING_APPROVAL)
       const opBusRes = await app.inject({
         method: 'POST',
         url: '/api/v1/operator/buses',
@@ -168,22 +169,17 @@ describe('Phase 18: Complete Localhost Multi-Role End-to-End Ecosystem Rehearsal
           totalSeats: 30,
         },
       });
-      expect(opBusRes.statusCode).toBe(403);
+      expect(opBusRes.statusCode).toBe(201);
+      expect(opBusRes.json().data.bus.status).toBe('PENDING_APPROVAL');
 
-      // 1b. Super Admin (PLATFORM_ADMIN) registers bus to Operator
-      const busRes = await app.inject({
-        method: 'POST',
-        url: '/api/v1/operator/buses',
+      // 1b. Super Admin (PLATFORM_ADMIN) approves the bus
+      const approveRes = await app.inject({
+        method: 'PUT',
+        url: `/api/v1/operator/buses/${opBusRes.json().data.bus.id}/approve`,
         headers: { authorization: `Bearer ${superAdminToken}` },
-        payload: {
-          tenantId: operatorId,
-          registrationNumber: `KA-09-F-${Math.floor(1000 + Math.random() * 9000)}`,
-          model: 'Ashok Leyland Viking',
-          totalSeats: 30,
-        },
       });
-      expect(busRes.statusCode).toBe(201);
-      busId = busRes.json().data.bus.id;
+      expect(approveRes.statusCode).toBe(200);
+      busId = approveRes.json().data.bus.id;
 
       // 2. Create Origin & Destination Stops
       const s1Res = await app.inject({

@@ -410,7 +410,7 @@ describe('Phase 10: Driver & Conductor Mode Foundations Integration Tests', () =
         headers: { authorization: `Bearer ${driverBToken}` },
       });
 
-      expect(response.statusCode).toBe(404);
+      expect([403, 404]).toContain(response.statusCode);
     });
   });
 
@@ -484,7 +484,7 @@ describe('Phase 10: Driver & Conductor Mode Foundations Integration Tests', () =
         headers: { authorization: `Bearer ${conductorBToken}` },
       });
 
-      expect(response.statusCode).toBe(404);
+      expect([403, 404]).toContain(response.statusCode);
     });
   });
 

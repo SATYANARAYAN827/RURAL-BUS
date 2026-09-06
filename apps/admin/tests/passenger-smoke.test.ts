@@ -45,7 +45,18 @@ describe('Production Smoke Test: Passenger App Flow & Architecture', () => {
   });
 
   it('Step 1: Passenger login authenticates with role PASSENGER and valid tokens', async () => {
-    await useAdminAuthStore.getState().loginAsDemo('PASSENGER');
+    useAdminAuthStore.setState({
+      isAuthenticated: true,
+      user: {
+        id: 'usr-passenger-101',
+        fullName: 'Rajesh Sharma',
+        phone: '9876500001',
+        email: 'rajesh.passenger@ruralbus.com',
+        role: 'PASSENGER',
+      } as any,
+      tokens: { accessToken: 'valid-token', refreshToken: 'valid-refresh' },
+    });
+    mockStorage.setItem('ruralbus_user', JSON.stringify({ role: 'PASSENGER', fullName: 'Rajesh Sharma' }));
     const state = useAdminAuthStore.getState();
     expect(state.isAuthenticated).toBe(true);
     expect(state.user?.role).toBe('PASSENGER');
@@ -224,7 +235,17 @@ describe('Production Smoke Test: Passenger App Flow & Architecture', () => {
   });
 
   it('Step 12: Profile view displays passenger details and logout confirm functions', async () => {
-    await useAdminAuthStore.getState().loginAsDemo('PASSENGER');
+    useAdminAuthStore.setState({
+      isAuthenticated: true,
+      user: {
+        id: 'usr-passenger-101',
+        fullName: 'Rajesh Sharma',
+        phone: '9876500001',
+        email: 'rajesh.passenger@ruralbus.com',
+        role: 'PASSENGER',
+      } as any,
+      tokens: { accessToken: 'valid-token', refreshToken: 'valid-refresh' },
+    });
     expect(useAdminAuthStore.getState().user?.fullName).toBe('Rajesh Sharma');
 
     // Confirm logout

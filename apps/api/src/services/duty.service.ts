@@ -2,6 +2,7 @@ import { eq, and, desc, inArray, sql } from 'drizzle-orm';
 import {
   db,
   withTenant,
+  withSystemContext,
   DrizzleTransaction,
   trips,
   routes,
@@ -147,6 +148,12 @@ export async function startDriverTrip(
       .where(and(eq(trips.id, tripId), eq(trips.tenantId, tenantId)));
 
     if (!trip) {
+      const [anyTrip] = await withSystemContext(async (sysTx) => {
+        return sysTx.select({ id: trips.id }).from(trips).where(eq(trips.id, tripId)).limit(1);
+      });
+      if (anyTrip) {
+        throw new ForbiddenError('You are not the designated driver for this trip');
+      }
       throw new NotFoundError('Assigned trip not found in your tenant');
     }
 
@@ -189,6 +196,12 @@ export async function endDriverTrip(
       .where(and(eq(trips.id, tripId), eq(trips.tenantId, tenantId)));
 
     if (!trip) {
+      const [anyTrip] = await withSystemContext(async (sysTx) => {
+        return sysTx.select({ id: trips.id }).from(trips).where(eq(trips.id, tripId)).limit(1);
+      });
+      if (anyTrip) {
+        throw new ForbiddenError('You are not the designated driver for this trip');
+      }
       throw new NotFoundError('Assigned trip not found in your tenant');
     }
 
@@ -346,6 +359,12 @@ export async function getPassengerManifest(
       .where(and(eq(trips.id, tripId), eq(trips.tenantId, tenantId)));
 
     if (!trip) {
+      const [anyTrip] = await withSystemContext(async (sysTx) => {
+        return sysTx.select({ id: trips.id }).from(trips).where(eq(trips.id, tripId)).limit(1);
+      });
+      if (anyTrip) {
+        throw new ForbiddenError('You are not the designated conductor for this trip');
+      }
       throw new NotFoundError('Trip not found in your tenant');
     }
 
@@ -448,6 +467,12 @@ export async function updatePassengerBoarding(
       .where(and(eq(trips.id, tripId), eq(trips.tenantId, tenantId)));
 
     if (!trip) {
+      const [anyTrip] = await withSystemContext(async (sysTx) => {
+        return sysTx.select({ id: trips.id }).from(trips).where(eq(trips.id, tripId)).limit(1);
+      });
+      if (anyTrip) {
+        throw new ForbiddenError('You are not the designated conductor for this trip');
+      }
       throw new NotFoundError('Trip not found');
     }
 

@@ -22,6 +22,9 @@ import {
   createBus,
   updateBus,
   deleteBus,
+  approveBus,
+  rejectBus,
+  listPendingBusRequests,
   listStops,
   createStop,
   updateStop,
@@ -86,12 +89,18 @@ export const fleetRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     }
   );
 
-  // Register Bus: STRICTLY RESTRICTED TO SUPER ADMIN (PLATFORM_ADMIN)
-  // Operators receive HTTP 403 Forbidden via requireRole(['PLATFORM_ADMIN'])
+  // Register Bus:
+  // - OPERATOR_ADMIN: creates bus with PENDING_APPROVAL status (awaiting super admin approval)
+  // - PLATFORM_ADMIN: creates bus directly ACTIVE
   app.post(
     '/api/v1/operator/buses',
-    superAdminOnlyGuards,
+    {
+      preHandler: [app.authenticate, requireRole(['OPERATOR_ADMIN', 'PLATFORM_ADMIN'])],
+    },
     async (request: FastifyRequest, reply: FastifyReply) => {
+      const callerRole = request.user!.role as 'PLATFORM_ADMIN' | 'OPERATOR_ADMIN';
+      const callerTenantId = callerRole === 'OPERATOR_ADMIN' ? (request.user!.tenantId || '') : '';
+
       const parsed = createBusSchema.safeParse(request.body);
       if (!parsed.success) {
         return reply.status(400).send({
@@ -103,13 +112,52 @@ export const fleetRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         });
       }
 
-      const bus = await createBus(parsed.data.tenantId, parsed.data);
+      // For OPERATOR_ADMIN, use their own tenantId
+      const tenantId = callerRole === 'OPERATOR_ADMIN' ? callerTenantId : (parsed.data.tenantId || '');
+      if (!tenantId) {
+        return reply.status(400).send({ success: false, error: { code: 'VALIDATION_ERROR', message: 'tenantId is required' } });
+      }
+
+      const bus = await createBus(tenantId, parsed.data, callerRole);
       return reply.status(201).send({
         success: true,
         data: { bus },
       });
     }
   );
+
+  // Super Admin: Approve a pending bus registration
+  app.put<{ Params: { busId: string } }>(
+    '/api/v1/operator/buses/:busId/approve',
+    superAdminOnlyGuards,
+    async (request: FastifyRequest<{ Params: { busId: string } }>, reply: FastifyReply) => {
+      const { busId } = request.params;
+      const bus = await approveBus(busId, request.user!);
+      return reply.status(200).send({ success: true, data: { bus } });
+    }
+  );
+
+  // Super Admin: Reject a pending bus registration
+  app.put<{ Params: { busId: string } }>(
+    '/api/v1/operator/buses/:busId/reject',
+    superAdminOnlyGuards,
+    async (request: FastifyRequest<{ Params: { busId: string } }>, reply: FastifyReply) => {
+      const { busId } = request.params;
+      const bus = await rejectBus(busId, request.user!);
+      return reply.status(200).send({ success: true, data: { bus } });
+    }
+  );
+
+  // Super Admin: List all pending bus registration requests
+  app.get(
+    '/api/v1/admin/bus-requests',
+    superAdminOnlyGuards,
+    async (_request: FastifyRequest, reply: FastifyReply) => {
+      const result = await listPendingBusRequests();
+      return reply.status(200).send({ success: true, data: result });
+    }
+  );
+
 
   // Update Bus
   app.put<{ Params: { busId: string } }>(

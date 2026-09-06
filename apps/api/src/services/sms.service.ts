@@ -262,11 +262,15 @@ export async function sendSmsOtp(options: SendSmsOptions): Promise<SmsSendResult
 
 export interface AccountProvisioningSmsOptions {
   phone: string;
-  transportName: string;
-  ownerName: string;
-  username: string;
-  initialPassword: string;
-  accountId: string;
+  transportName?: string;
+  ownerName?: string;
+  username?: string;
+  initialPassword?: string;
+  accountId?: string;
+  role?: string;
+  fullName?: string;
+  temporaryPassword?: string;
+  operatorName?: string;
 }
 
 export interface AccountProvisioningSmsResult {
@@ -280,14 +284,22 @@ export interface AccountProvisioningSmsResult {
 export async function sendAccountProvisioningSms(
   options: AccountProvisioningSmsOptions
 ): Promise<AccountProvisioningSmsResult> {
-  const { phone, transportName, username, initialPassword, accountId } = options;
+  const phone = options.phone;
+  const transportName = options.transportName || options.operatorName || 'Rural Bus Transport';
+  const ownerName = options.ownerName || options.fullName || 'Member';
+  const roleName = options.role || 'Owner';
+  const username = options.username || options.phone;
+  const initialPassword = options.initialPassword || options.temporaryPassword || '';
+  const accountId = options.accountId || 'RB-STAFF';
+
   const cleanPhone = normalizeIndianPhone(phone);
   const maskedPhone = `+91 ${cleanPhone.slice(0, 2)}****${cleanPhone.slice(-4)}`;
 
   const smsBody =
-`Rural Bus: Your Transport Owner account has been created successfully.
+`Rural Bus: Your ${roleName} account has been created successfully.
 Transport: ${transportName}
-Role: Owner
+Name: ${ownerName}
+Role: ${roleName}
 Username: ${username}
 Password: ${initialPassword}
 Account ID: ${accountId}

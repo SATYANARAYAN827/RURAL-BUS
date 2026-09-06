@@ -7,6 +7,7 @@ import * as schema from './schema/index.js';
 const { Pool } = pg;
 
 export * from './schema/index.js';
+export { assertResetAllowed } from './reset-guard.js';
 
 export type DatabaseInstance = NodePgDatabase<typeof schema>;
 export type DrizzleTransaction = Parameters<Parameters<DatabaseInstance['transaction']>[0]>[0];

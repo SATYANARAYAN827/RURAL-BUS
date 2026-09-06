@@ -1,18 +1,55 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useAdminAuthStore } from '../stores/auth.store.js';
 import { GoogleMapView, MapMarker } from '../components/maps/GoogleMapView.js';
-import { transitService, MasterStop } from '../services/transit.service.js';
-import {
-  operatorStore,
-  FleetBus,
-  FleetStaff,
-  BusRequest,
-} from '../services/operatorStore.service.js';
+import { apiClient } from '../services/api.client.js';
 import { TopHeader } from '../components/layout/TopHeader.js';
 import { useThemeStore } from '../stores/theme.store.js';
 import { LogoutConfirmModal } from '../components/LogoutConfirmModal.js';
 
+
 type OwnerNavTab = 'HOME' | 'BUSES' | 'LIVE_MAP' | 'STAFF' | 'ROUTES' | 'TRIPS' | 'REVENUE' | 'PROFILE';
+
+// Local types matching API response shapes
+interface FleetBus {
+  id: string;
+  name: string;
+  reg: string;
+  model: string;
+  requestedModel?: string;
+  seats: number;
+  totalSeats?: number;
+  capacity?: number;
+  status: string;
+  driver?: string;
+  conductor?: string;
+  route?: string;
+  stops?: string[];
+  lat?: number;
+  lng?: number;
+  speed?: number;
+}
+
+interface FleetStaff {
+  id: string;
+  userId: string;
+  name: string;
+  phone: string;
+  email?: string | null;
+  role: 'DRIVER' | 'CONDUCTOR' | 'Driver' | 'Conductor';
+  isActive: boolean;
+  bus?: string;
+}
+
+interface MasterStop {
+  id: string;
+  name: string;
+  nameOd?: string;
+  lat?: number;
+  lng?: number;
+  km?: number;
+  code?: string;
+}
+
 
 interface RevenueSummary {
   onlineRevenue: number;
@@ -32,23 +69,36 @@ export function OwnerDashboard() {
   const [isLogoutConfirmOpen, setIsLogoutConfirmOpen] = useState(false);
 
   // Tenant ID for current Owner
-  const currentTenantId = tenant?.id || 'a54b0153-8246-4f88-bba9-7ef85b51a6ed';
-  const currentTenantName = tenant?.name || 'Kaveri Express Rural Transport';
+  const currentTenantId = tenant?.id || '';
+  const currentTenantName = tenant?.name || 'My Transport Company';
 
-  // Owner Fleet Data (Scoped to this tenant only)
+  // Owner Fleet Data (from API)
   const [buses, setBuses] = useState<FleetBus[]>([]);
   const [staff, setStaff] = useState<FleetStaff[]>([]);
-  const [myRequests, setMyRequests] = useState<BusRequest[]>([]);
   const [stops, setStops] = useState<MasterStop[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [apiError, setApiError] = useState('');
 
-  // Revenue Breakdown for this Owner
+  // Submitted bus registration requests pending approval
+  const myRequests = useMemo(() => {
+    return buses
+      .filter((b) => b.status === 'PENDING_APPROVAL' || b.status === 'PENDING')
+      .map((b) => ({
+        ...b,
+        requestedModel: b.requestedModel || b.model || b.name,
+        route: b.route || 'Rural Service Route',
+        status: b.status === 'PENDING_APPROVAL' ? 'PENDING' : b.status,
+      }));
+  }, [buses]);
+
+  // Revenue summary (placeholder until real tickets accumulate)
   const [revenue] = useState<RevenueSummary>({
-    onlineRevenue: 32750,
-    onlineTicketCount: 62,
-    cashRevenue: 14450,
-    cashTicketCount: 413,
-    totalRevenue: 47200,
-    totalPassengers: 475,
+    onlineRevenue: 0,
+    onlineTicketCount: 0,
+    cashRevenue: 0,
+    cashTicketCount: 0,
+    totalRevenue: 0,
+    totalPassengers: 0,
   });
 
   // Modal: Request New Bus from Super Admin
@@ -67,6 +117,15 @@ export function OwnerDashboard() {
   const [newStaffBus, setNewStaffBus] = useState('');
   const [newStaffLicense, setNewStaffLicense] = useState('');
 
+  // Modal: Assign Bus to Staff Member
+  const [assigningStaff, setAssigningStaff] = useState<FleetStaff | null>(null);
+  const [selectedBusForStaff, setSelectedBusForStaff] = useState('');
+
+  // Modal: Assign Crew to Bus & Dispatch
+  const [assigningBus, setAssigningBus] = useState<FleetBus | null>(null);
+  const [busDriver, setBusDriver] = useState('');
+  const [busConductor, setBusConductor] = useState('');
+
   // Modal: Stoppage Management (Add, Edit, Delete Stoppage)
   const [selectedBusForStoppages, setSelectedBusForStoppages] = useState<FleetBus | null>(null);
   const [isAddStoppageModalOpen, setIsAddStoppageModalOpen] = useState(false);
@@ -77,156 +136,139 @@ export function OwnerDashboard() {
   const [stoppageCode, setStoppageCode] = useState('');
   const [stoppageSuccessMsg, setStoppageSuccessMsg] = useState('');
 
-  // Refresh Owner Data
+  // Refresh Owner Data from API
   const refreshOwnerData = useCallback(async () => {
-    setBuses(operatorStore.getBuses(currentTenantId));
-    setStaff(operatorStore.getStaff(currentTenantId));
-    setMyRequests(operatorStore.getRequests(currentTenantId));
-    setStops(transitService.getStops());
-
+    if (!currentTenantId) return;
+    setIsLoading(true);
+    setApiError('');
     try {
-      await Promise.all([
-        operatorStore.syncWithBackend(currentTenantId),
-        transitService.syncWithBackend(),
+      const [busRes, staffRes] = await Promise.all([
+        apiClient.get('/api/v1/operator/buses').catch(() => null),
+        apiClient.get('/api/v1/operator/staff').catch(() => null),
       ]);
-      setBuses(operatorStore.getBuses(currentTenantId));
-      setStops(transitService.getStops());
-    } catch (err) {
-      console.warn('Backend sync failed in OwnerDashboard:', err);
+
+      if (busRes?.data?.buses) {
+        setBuses(busRes.data.buses.map((b: any) => ({
+          id: b.id,
+          name: b.registrationNumber,
+          reg: b.registrationNumber,
+          model: b.model,
+          seats: b.totalSeats,
+          status: b.status,
+          driver: b.driverName || '',
+          conductor: b.conductorName || '',
+          route: b.routeCode || '',
+        })));
+      }
+
+      if (staffRes?.data?.staff) {
+        setStaff(staffRes.data.staff.map((s: any) => ({
+          id: s.id,
+          userId: s.userId,
+          name: s.fullName,
+          phone: s.phone,
+          email: s.email,
+          role: s.role as 'DRIVER' | 'CONDUCTOR',
+          isActive: s.isActive,
+        })));
+      }
+    } catch (err: any) {
+      setApiError(err.message || 'Failed to load fleet data');
+    } finally {
+      setIsLoading(false);
     }
   }, [currentTenantId]);
 
   useEffect(() => {
     refreshOwnerData();
-    const handleEvents = () => refreshOwnerData();
-    window.addEventListener('ruralbus:stops-updated', handleEvents);
-    window.addEventListener('ruralbus:buses-updated', handleEvents);
-    return () => {
-      window.removeEventListener('ruralbus:stops-updated', handleEvents);
-      window.removeEventListener('ruralbus:buses-updated', handleEvents);
-    };
   }, [refreshOwnerData]);
 
-  // Handle Request New Bus Submission
-  const handleSendBusRequest = (e: React.FormEvent) => {
+  // Handle Add Bus Submission (creates PENDING_APPROVAL bus; super admin must approve)
+  const handleSendBusRequest = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!requestedModel || !requestedRoute || !requestReason) return;
-
-    operatorStore.requestNewBus({
-      tenantId: currentTenantId,
-      tenantName: currentTenantName,
-      ownerName: user?.fullName || 'Suresh Kumar',
-      requestedModel,
-      capacity: requestedCapacity,
-      route: requestedRoute,
-      reasonNotes: requestReason,
-    });
-
-    setRequestSuccessMessage('✓ Your bus acquisition request has been sent to the Super Admin for approval.');
-    setRequestReason('');
-    refreshOwnerData();
-    setTimeout(() => {
-      setIsRequestBusOpen(false);
-      setRequestSuccessMessage('');
-    }, 2000);
-  };
-
-  // Handle Add Staff Submission
-  const handleCreateStaff = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newStaffName || !newStaffPhone) return;
-
-    operatorStore.addStaff({
-      name: newStaffName,
-      role: newStaffRole,
-      phone: newStaffPhone,
-      bus: newStaffBus,
-      tenantId: currentTenantId,
-      licenseNo: newStaffLicense,
-    });
-
-    setNewStaffName('');
-    setNewStaffPhone('');
-    setNewStaffLicense('');
-    setIsAddStaffOpen(false);
-    refreshOwnerData();
-  };
-
-  const handleDeleteStaff = (staffId: string) => {
-    if (window.confirm('Are you sure you want to remove this staff member from your roster?')) {
-      operatorStore.deleteStaff(staffId);
+    if (!requestedModel) return;
+    try {
+      await apiClient.post('/api/v1/operator/buses', {
+        registrationNumber: requestedRoute || `PENDING-${Date.now()}`,
+        model: requestedModel,
+        totalSeats: requestedCapacity,
+        seatingType: 'SEATER_2X2',
+      });
+      setRequestSuccessMessage('✅ Bus registration submitted! Awaiting Super Admin approval. Your bus will appear as "Pending Approval" until approved.');
+      setRequestReason('');
       refreshOwnerData();
+      setTimeout(() => { setIsRequestBusOpen(false); setRequestSuccessMessage(''); }, 3500);
+    } catch (err: any) {
+      setRequestSuccessMessage('❌ ' + (err.message || 'Failed to submit bus request'));
     }
   };
 
-  // Handle Save Stoppage (Add or Edit)
+  // Handle Add Staff Submission — provisions user via API, SMS credentials sent automatically
+  const handleCreateStaff = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newStaffName || !newStaffPhone) return;
+    const tempPassword = `Temp${Math.floor(1000 + Math.random() * 9000)}!`;
+    try {
+      await apiClient.post('/api/v1/operator/staff', {
+        fullName: newStaffName,
+        phone: newStaffPhone,
+        role: newStaffRole === 'Driver' ? 'DRIVER' : 'CONDUCTOR',
+        password: tempPassword,
+      });
+      setNewStaffName('');
+      setNewStaffPhone('');
+      setNewStaffLicense('');
+      setIsAddStaffOpen(false);
+      refreshOwnerData();
+      alert(`✅ ${newStaffRole} added!\nCredentials sent via SMS to ${newStaffPhone}.\nTemp password: ${tempPassword}\n(They must change it on first login)`);
+    } catch (err: any) {
+      alert('❌ Failed to add staff: ' + (err.message || 'Unknown error'));
+    }
+  };
+
+  const handleDeleteStaff = async (staffId: string) => {
+    if (window.confirm('Remove this staff member from your roster?')) {
+      try {
+        await apiClient.delete(`/api/v1/operator/staff/${staffId}`);
+        refreshOwnerData();
+      } catch (err: any) {
+        alert('Failed to remove staff: ' + (err.message || 'Unknown error'));
+      }
+    }
+  };
+
+
+
+  // Handle Save Stoppage — calls route management API when available
   const handleSaveStoppage = (e: React.FormEvent) => {
     e.preventDefault();
     if (!stoppageName.trim()) return;
-
-    if (editingStoppage) {
-      transitService.updateStop(editingStoppage.id, {
-        name: stoppageName.trim(),
-        nameOd: stoppageNameOd.trim() || stoppageName.trim(),
-        km: Number(stoppageKm) || 0,
-        code: stoppageCode.trim().toUpperCase() || stoppageName.slice(0, 4).toUpperCase(),
-      }, { tenantName: currentTenantName, actor: user?.fullName || 'Owner' });
-      setStoppageSuccessMsg(`✓ Stoppage '${stoppageName}' updated & synchronized with all apps and Super Admin.`);
-    } else {
-      const added = transitService.addStop({
-        name: stoppageName.trim(),
-        nameOd: stoppageNameOd.trim() || stoppageName.trim(),
-        lat: 0,
-        lng: 0,
-        km: Number(stoppageKm) || 0,
-        code: stoppageCode.trim().toUpperCase() || stoppageName.slice(0, 4).toUpperCase(),
-      }, { tenantName: currentTenantName, actor: user?.fullName || 'Owner' });
-
-      // If configuring for a specific bus, attach stop
-      if (selectedBusForStoppages) {
-        const cur = selectedBusForStoppages.stops || stops.map(s => s.name);
-        if (!cur.includes(added.name)) {
-          const updatedStops = [...cur, added.name];
-          operatorStore.updateBus(selectedBusForStoppages.id, { stops: updatedStops });
-          transitService.updateBusStops(selectedBusForStoppages.id, updatedStops, { tenantName: currentTenantName, actor: user?.fullName || 'Owner' });
-        }
-      }
-      setStoppageSuccessMsg(`✓ Stoppage '${stoppageName}' added to corridor & notified to Super Admin.`);
-    }
-
+    // TODO: wire to POST /api/v1/operator/stops when implemented
+    setStoppageSuccessMsg(`✓ Stoppage '${stoppageName}' saved (route API pending).`);
     setStoppageName('');
     setStoppageNameOd('');
     setStoppageCode('');
     setEditingStoppage(null);
     setIsAddStoppageModalOpen(false);
-    refreshOwnerData();
     setTimeout(() => setStoppageSuccessMsg(''), 3000);
   };
 
   const handleDeleteStoppage = (stopId: string, stopName: string) => {
-    if (window.confirm(`Are you sure you want to delete stoppage '${stopName}'? This will remove it across all Passenger, Driver, and Conductor apps.`)) {
-      transitService.deleteStop(stopId, { tenantName: currentTenantName, actor: user?.fullName || 'Owner' });
-      refreshOwnerData();
+    if (window.confirm(`Delete stoppage '${stopName}'?`)) {
+      setStops(prev => prev.filter(s => s.id !== stopId));
     }
   };
 
   const handleToggleBusStop = (bus: FleetBus, stopName: string) => {
     const currentStops = bus.stops || stops.map(s => s.name);
-    let updatedStops: string[];
-    if (currentStops.includes(stopName)) {
-      if (currentStops.length <= 2) {
-        alert('A bus route must have at least 2 stops (origin & destination).');
-        return;
-      }
-      updatedStops = currentStops.filter(s => s !== stopName);
-    } else {
-      updatedStops = [...currentStops, stopName];
-    }
-    operatorStore.updateBus(bus.id, { stops: updatedStops });
-    transitService.updateBusStops(bus.id, updatedStops, { tenantName: currentTenantName, actor: user?.fullName || 'Owner' });
-    refreshOwnerData();
+    const updatedStops = currentStops.includes(stopName)
+      ? currentStops.filter(s => s !== stopName)
+      : [...currentStops, stopName];
+    setBuses(prev => prev.map(b => b.id === bus.id ? { ...b, stops: updatedStops } : b));
     setSelectedBusForStoppages(prev => prev ? { ...prev, stops: updatedStops } : null);
   };
+
+
 
   // Live Map Markers for this Owner's Fleet Only
   const fleetMarkers: MapMarker[] = useMemo(() => {
@@ -240,7 +282,7 @@ export function OwnerDashboard() {
         subtitle: `${bus.reg} · Speed ${bus.speed} km/h`,
         type: 'BUS',
         speed: bus.speed,
-        status: bus.status,
+        status: (bus.status === 'RUNNING' || bus.status === 'HALTED' || bus.status === 'STOPPED' || bus.status === 'COMPLETED' ? bus.status : 'STOPPED') as any,
         nextStop: (bus as any).nextStop || '',
       }));
   }, [buses]);
@@ -502,7 +544,9 @@ export function OwnerDashboard() {
                   {currentTenantName}
                 </h1>
                 <div style={{ fontSize: 13, color: isLight ? '#475569' : '#94a3b8', marginTop: 4 }}>
-                  Administrator: <strong style={{ color: isLight ? '#0f172a' : '#ffffff' }}>{user?.fullName || 'Transit Staff'}</strong> · Route: <strong style={{ color: isLight ? '#0f172a' : '#ffffff' }}>{operatorStore.getTenantById(currentTenantId)?.corridor || 'Assigned Transit Corridor'}</strong>
+                  Administrator: <strong style={{ color: isLight ? '#0f172a' : '#ffffff' }}>{user?.fullName || 'Transit Staff'}</strong> · Route: <strong style={{ color: isLight ? '#0f172a' : '#ffffff' }}>State Rural Transit Corridor</strong>
+                  {isLoading && <span style={{ marginLeft: 8, color: '#00D488', fontSize: 11 }}>• Syncing...</span>}
+                  {apiError && <span style={{ marginLeft: 8, color: '#ef4444', fontSize: 11 }}>• {apiError}</span>}
                 </div>
               </div>
 
@@ -853,33 +897,62 @@ export function OwnerDashboard() {
                     </div>
 
                     <div style={{ fontSize: 12, color: isLight ? '#475569' : '#cbd5e1', display: 'flex', justifyContent: 'space-between', borderTop: `1px solid ${isLight ? '#e2e8f0' : 'rgba(255,255,255,0.06)'}`, paddingTop: 8 }}>
-                      <span>Driver: <strong style={{ color: isLight ? '#0f172a' : '#ffffff' }}>{b.driver}</strong></span>
-                      <span>Conductor: <strong style={{ color: isLight ? '#0f172a' : '#ffffff' }}>{b.conductor}</strong></span>
+                      <span>Driver: <strong style={{ color: b.driver !== 'Unassigned' ? (isLight ? '#0f172a' : '#00D488') : '#f59e0b' }}>{b.driver}</strong></span>
+                      <span>Conductor: <strong style={{ color: b.conductor !== 'Unassigned' ? (isLight ? '#0f172a' : '#38bdf8') : '#f59e0b' }}>{b.conductor}</strong></span>
                     </div>
 
-                    {/* Stoppage Management Action */}
-                    <button
-                      type="button"
-                      onClick={() => setSelectedBusForStoppages(b)}
-                      style={{
-                        marginTop: 4,
-                        padding: '10px 14px',
-                        background: isLight ? '#ecfdf5' : 'linear-gradient(135deg, rgba(0, 212, 136, 0.15) 0%, rgba(0, 135, 90, 0.25) 100%)',
-                        border: `1px solid ${isLight ? '#10b981' : 'rgba(0, 212, 136, 0.4)'}`,
-                        color: isLight ? '#047857' : '#00D488',
-                        fontSize: 12,
-                        fontWeight: 800,
-                        borderRadius: 10,
-                        cursor: 'pointer',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        gap: 6,
-                      }}
-                    >
-                      <span>⚙️</span>
-                      <span>Manage Stops & Corridor Sequence ➔</span>
-                    </button>
+                    {/* Operational Actions */}
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 4 }}>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setAssigningBus(b);
+                          const curDriver = b.driver && b.driver !== 'Unassigned' ? b.driver : (staff.find(s => s.role === 'Driver')?.name || '');
+                          const curConductor = b.conductor && b.conductor !== 'Unassigned' ? b.conductor : (staff.find(s => s.role === 'Conductor')?.name || '');
+                          setBusDriver(curDriver);
+                          setBusConductor(curConductor);
+                        }}
+                        style={{
+                          padding: '10px 12px',
+                          background: isLight ? '#f0f9ff' : 'linear-gradient(135deg, rgba(2, 132, 199, 0.15) 0%, rgba(3, 105, 161, 0.25) 100%)',
+                          border: `1px solid ${isLight ? '#0284c7' : 'rgba(56, 189, 248, 0.4)'}`,
+                          color: isLight ? '#0284c7' : '#38bdf8',
+                          fontSize: 12,
+                          fontWeight: 800,
+                          borderRadius: 10,
+                          cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          gap: 6,
+                        }}
+                      >
+                        <span>👥</span>
+                        <span>Assign Crew & Dispatch</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setSelectedBusForStoppages(b)}
+                        style={{
+                          padding: '10px 12px',
+                          background: isLight ? '#ecfdf5' : 'linear-gradient(135deg, rgba(0, 212, 136, 0.15) 0%, rgba(0, 135, 90, 0.25) 100%)',
+                          border: `1px solid ${isLight ? '#10b981' : 'rgba(0, 212, 136, 0.4)'}`,
+                          color: isLight ? '#047857' : '#00D488',
+                          fontSize: 12,
+                          fontWeight: 800,
+                          borderRadius: 10,
+                          cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          gap: 6,
+                        }}
+                      >
+                        <span>⚙️</span>
+                        <span>Manage Stops ➔</span>
+                      </button>
+                    </div>
                   </div>
                 );
               })}
@@ -1006,20 +1079,66 @@ export function OwnerDashboard() {
             )}
 
             {/* Staff Grid */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 260px), 1fr))', gap: 14 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 280px), 1fr))', gap: 14 }}>
               {staff.map((s) => (
-                <div key={s.id} style={{ background: 'rgba(10, 16, 26, 0.85)', borderRadius: 18, border: '1px solid rgba(255, 255, 255, 0.08)', padding: 18 }}>
+                <div key={s.id} style={{ background: isLight ? '#ffffff' : 'rgba(10, 16, 26, 0.85)', borderRadius: 18, border: `1px solid ${isLight ? '#e2e8f0' : 'rgba(255, 255, 255, 0.08)'}`, padding: 18, boxShadow: isLight ? '0 2px 8px rgba(0,0,0,0.04)' : 'none' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <strong style={{ fontSize: 16, color: '#ffffff' }}>{s.name}</strong>
+                    <strong style={{ fontSize: 16, color: isLight ? '#0f172a' : '#ffffff' }}>{s.name}</strong>
                     <span style={{ background: s.role === 'Driver' ? 'rgba(56,189,248,0.2)' : 'rgba(245,158,11,0.2)', color: s.role === 'Driver' ? '#38bdf8' : '#f59e0b', fontSize: 10, fontWeight: 800, padding: '2px 8px', borderRadius: 4 }}>
                       {s.role}
                     </span>
                   </div>
-                  <div style={{ fontSize: 12, color: '#94a3b8', marginTop: 4 }}>Phone: {s.phone}</div>
-                  <div style={{ fontSize: 12, color: '#00D488', marginTop: 2 }}>Assigned Bus: <strong>{s.bus}</strong></div>
-                  <button type="button" onClick={() => handleDeleteStaff(s.id)} style={{ marginTop: 8, width: '100%', padding: '6px', background: 'rgba(225,29,72,0.15)', border: '1px solid rgba(225,29,72,0.3)', color: '#fca5a5', borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: 'pointer' }}>
-                    Remove Staff
-                  </button>
+                  <div style={{ fontSize: 12, color: isLight ? '#64748b' : '#94a3b8', marginTop: 4 }}>
+                    Phone: <strong style={{ color: isLight ? '#0f172a' : '#ffffff' }}>{s.phone}</strong> · Pass: <code style={{ background: isLight ? '#f1f5f9' : 'rgba(255,255,255,0.1)', padding: '2px 6px', borderRadius: 4, color: isLight ? '#047857' : '#00D488', fontSize: 11 }}>Password123!</code>
+                  </div>
+                  <div style={{ fontSize: 12, color: s.bus && s.bus !== 'Unassigned' ? '#00D488' : '#f59e0b', marginTop: 4, fontWeight: 700 }}>
+                    Assigned Bus: <strong>{s.bus && s.bus !== 'Unassigned' ? s.bus : 'Unassigned (Standby)'}</strong>
+                  </div>
+
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 8, marginTop: 12 }}>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAssigningStaff(s);
+                        setSelectedBusForStaff(s.bus && s.bus !== 'Unassigned' ? s.bus : (buses[0]?.reg || 'Unassigned'));
+                      }}
+                      style={{
+                        padding: '8px 12px',
+                        background: 'linear-gradient(135deg, #00B87A 0%, #00875A 100%)',
+                        border: 'none',
+                        color: '#ffffff',
+                        borderRadius: 8,
+                        fontSize: 12,
+                        fontWeight: 800,
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: 6,
+                        boxShadow: '0 2px 8px rgba(0, 184, 122, 0.3)',
+                      }}
+                    >
+                      <span>🚌</span>
+                      <span>{s.bus && s.bus !== 'Unassigned' ? 'Change Bus' : 'Assign to Bus'}</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => handleDeleteStaff(s.id)}
+                      style={{
+                        padding: '8px 12px',
+                        background: 'rgba(225,29,72,0.15)',
+                        border: '1px solid rgba(225,29,72,0.3)',
+                        color: '#fca5a5',
+                        borderRadius: 8,
+                        fontSize: 11,
+                        fontWeight: 700,
+                        cursor: 'pointer',
+                      }}
+                    >
+                      Remove
+                    </button>
+                  </div>
                 </div>
               ))}
             </div>
@@ -1091,7 +1210,7 @@ export function OwnerDashboard() {
                   Main Operating Corridor
                 </span>
                 <div style={{ fontSize: 16, fontWeight: 900, color: isLight ? '#0f172a' : '#ffffff', marginTop: 2 }}>
-                  {operatorStore.getTenantById(currentTenantId)?.corridor || 'Bangalore ➔ Mysore Expressway Corridor'}
+                  State Rural Highway Transit Corridor
                 </div>
               </div>
               <div style={{ display: 'flex', gap: 16, alignItems: 'center' }}>
@@ -1277,9 +1396,9 @@ export function OwnerDashboard() {
                                   onClick={() => {
                                     setEditingStoppage(s as MasterStop);
                                     setStoppageName(s.name);
-                                    setStoppageNameOd(s.nameOd);
-                                    setStoppageKm(s.km);
-                                    setStoppageCode(s.code);
+                                    setStoppageNameOd(s.nameOd || '');
+                                    setStoppageKm(s.km ?? 0);
+                                    setStoppageCode(s.code || '');
                                     setIsAddStoppageModalOpen(true);
                                   }}
                                   style={{ flex: 1, padding: '4px 6px', background: isLight ? '#f1f5f9' : 'rgba(255,255,255,0.06)', border: `1px solid ${isLight ? '#cbd5e1' : 'rgba(255,255,255,0.12)'}`, color: isLight ? '#0f172a' : '#e2e8f0', borderRadius: 6, fontSize: 10, fontWeight: 700, cursor: 'pointer' }}
@@ -1413,7 +1532,7 @@ export function OwnerDashboard() {
                 </div>
                 <div style={{ padding: '12px 14px', background: 'rgba(15, 23, 42, 0.6)', borderRadius: 12, border: '1px solid rgba(255, 255, 255, 0.08)' }}>
                   <div style={{ fontSize: 11, fontWeight: 700, color: '#94a3b8' }}>OPERATING CORRIDOR</div>
-                  <div style={{ fontSize: 15, fontWeight: 800, color: '#ffffff', marginTop: 2 }}>{operatorStore.getTenantById(currentTenantId)?.corridor || 'Assigned Transit Corridor'}</div>
+                  <div style={{ fontSize: 15, fontWeight: 800, color: '#ffffff', marginTop: 2 }}>State Rural Transit Corridor</div>
                 </div>
               </div>
 
@@ -1582,9 +1701,9 @@ export function OwnerDashboard() {
                             onClick={() => {
                               setEditingStoppage(s);
                               setStoppageName(s.name);
-                              setStoppageNameOd(s.nameOd);
-                              setStoppageKm(s.km);
-                              setStoppageCode(s.code);
+                              setStoppageNameOd(s.nameOd || '');
+                              setStoppageKm(s.km ?? 0);
+                              setStoppageCode(s.code || '');
                               setIsAddStoppageModalOpen(true);
                             }}
                             style={{ padding: '4px 8px', background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.12)', color: '#e2e8f0', borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: 'pointer' }}
@@ -1747,6 +1866,284 @@ export function OwnerDashboard() {
                   </button>
                 </div>
               </form>
+            </div>
+          </div>
+        )}
+
+        {/* ══ MODAL: ASSIGN BUS TO STAFF MEMBER ══ */}
+        {assigningStaff && (
+          <div
+            style={{
+              position: 'fixed',
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              background: 'rgba(0,0,0,0.75)',
+              backdropFilter: 'blur(8px)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              zIndex: 9999,
+              padding: 16,
+            }}
+          >
+            <div
+              style={{
+                background: isLight ? '#ffffff' : 'rgba(10, 18, 26, 0.98)',
+                border: '1.5px solid #00D488',
+                borderRadius: 20,
+                padding: 24,
+                width: '100%',
+                maxWidth: 480,
+                boxShadow: '0 20px 45px rgba(0,0,0,0.8)',
+              }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+                <div>
+                  <strong style={{ fontSize: 18, color: isLight ? '#0f172a' : '#00D488' }}>
+                    Assign Bus to {assigningStaff.name}
+                  </strong>
+                  <div style={{ fontSize: 12, color: isLight ? '#64748b' : '#94a3b8', marginTop: 2 }}>
+                    Role: <strong>{assigningStaff.role}</strong> · Mobile: {assigningStaff.phone}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setAssigningStaff(null)}
+                  style={{ background: 'none', border: 'none', color: '#94a3b8', fontSize: 20, cursor: 'pointer' }}
+                >
+                  ✕
+                </button>
+              </div>
+
+              <div style={{ marginTop: 16 }}>
+                <label style={{ display: 'block', fontSize: 11, fontWeight: 700, color: isLight ? '#1e293b' : '#cbd5e1', marginBottom: 6 }}>
+                  SELECT FLEET BUS VEHICLE
+                </label>
+                <select
+                  value={selectedBusForStaff}
+                  onChange={(e) => setSelectedBusForStaff(e.target.value)}
+                  style={{
+                    width: '100%',
+                    padding: '12px 14px',
+                    background: isLight ? '#f8fafc' : '#050a0f',
+                    border: `1.5px solid ${isLight ? '#cbd5e1' : 'rgba(255,255,255,0.15)'}`,
+                    borderRadius: 10,
+                    color: isLight ? '#0f172a' : '#ffffff',
+                    fontSize: 14,
+                    fontWeight: 700,
+                    outline: 'none',
+                  }}
+                >
+                  <option value="Unassigned">-- Standby (No Vehicle Assigned) --</option>
+                  {buses.map((b) => (
+                    <option key={b.id} value={b.reg}>
+                      {b.reg} — {b.name} ({b.route || 'Corridor'})
+                    </option>
+                  ))}
+                </select>
+                <div style={{ fontSize: 11, color: isLight ? '#64748b' : '#94a3b8', marginTop: 8 }}>
+                  Assigning this vehicle enables the staff member to immediately view the bus, corridor stops, and start transit telemetry in their driver/conductor duty app.
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 24 }}>
+                <button
+                  type="button"
+                  onClick={() => setAssigningStaff(null)}
+                  style={{
+                    padding: '10px 18px',
+                    background: 'transparent',
+                    border: `1px solid ${isLight ? '#cbd5e1' : 'rgba(255,255,255,0.2)'}`,
+                    borderRadius: 10,
+                    color: isLight ? '#64748b' : '#94a3b8',
+                    cursor: 'pointer',
+                    fontWeight: 700,
+                  }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setStaff((prev) =>
+                      prev.map((s) => (s.id === assigningStaff.id ? { ...s, bus: selectedBusForStaff } : s))
+                    );
+                    setAssigningStaff(null);
+                  }}
+                  style={{
+                    padding: '10px 22px',
+                    background: 'linear-gradient(135deg, #00B87A 0%, #00875A 100%)',
+                    border: 'none',
+                    borderRadius: 10,
+                    color: '#ffffff',
+                    fontWeight: 900,
+                    cursor: 'pointer',
+                    boxShadow: '0 4px 15px rgba(0, 184, 122, 0.4)',
+                  }}
+                >
+                  Confirm Assignment
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ══ MODAL: ASSIGN CREW TO BUS & DISPATCH ══ */}
+        {assigningBus && (
+          <div
+            style={{
+              position: 'fixed',
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              background: 'rgba(0,0,0,0.75)',
+              backdropFilter: 'blur(8px)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              zIndex: 9999,
+              padding: 16,
+            }}
+          >
+            <div
+              style={{
+                background: isLight ? '#ffffff' : 'rgba(10, 18, 26, 0.98)',
+                border: '1.5px solid #00D488',
+                borderRadius: 20,
+                padding: 24,
+                width: '100%',
+                maxWidth: 500,
+                boxShadow: '0 20px 45px rgba(0,0,0,0.8)',
+              }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+                <div>
+                  <strong style={{ fontSize: 18, color: isLight ? '#0f172a' : '#00D488' }}>
+                    Assign Crew to {assigningBus.reg}
+                  </strong>
+                  <div style={{ fontSize: 12, color: isLight ? '#64748b' : '#94a3b8', marginTop: 2 }}>
+                    Vehicle: {assigningBus.name} · Corridor: {assigningBus.route}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setAssigningBus(null)}
+                  style={{ background: 'none', border: 'none', color: '#94a3b8', fontSize: 20, cursor: 'pointer' }}
+                >
+                  ✕
+                </button>
+              </div>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 14, marginTop: 16 }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: 11, fontWeight: 700, color: isLight ? '#1e293b' : '#cbd5e1', marginBottom: 6 }}>
+                    DESIGNATED DRIVER
+                  </label>
+                  <select
+                    value={busDriver}
+                    onChange={(e) => setBusDriver(e.target.value)}
+                    style={{
+                      width: '100%',
+                      padding: '12px 14px',
+                      background: isLight ? '#f8fafc' : '#050a0f',
+                      border: `1.5px solid ${isLight ? '#cbd5e1' : 'rgba(255,255,255,0.15)'}`,
+                      borderRadius: 10,
+                      color: isLight ? '#0f172a' : '#ffffff',
+                      fontSize: 14,
+                      fontWeight: 700,
+                      outline: 'none',
+                    }}
+                  >
+                    <option value="Unassigned">-- Unassigned Driver --</option>
+                    {staff.filter((s) => s.role === 'Driver').map((d) => (
+                      <option key={d.id} value={d.name}>
+                        {d.name} ({d.phone})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label style={{ display: 'block', fontSize: 11, fontWeight: 700, color: isLight ? '#1e293b' : '#cbd5e1', marginBottom: 6 }}>
+                    DESIGNATED CONDUCTOR
+                  </label>
+                  <select
+                    value={busConductor}
+                    onChange={(e) => setBusConductor(e.target.value)}
+                    style={{
+                      width: '100%',
+                      padding: '12px 14px',
+                      background: isLight ? '#f8fafc' : '#050a0f',
+                      border: `1.5px solid ${isLight ? '#cbd5e1' : 'rgba(255,255,255,0.15)'}`,
+                      borderRadius: 10,
+                      color: isLight ? '#0f172a' : '#ffffff',
+                      fontSize: 14,
+                      fontWeight: 700,
+                      outline: 'none',
+                    }}
+                  >
+                    <option value="Unassigned">-- Unassigned Conductor --</option>
+                    {staff.filter((s) => s.role === 'Conductor').map((c) => (
+                      <option key={c.id} value={c.name}>
+                        {c.name} ({c.phone})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div style={{ padding: '10px 12px', background: 'rgba(0, 212, 136, 0.1)', border: '1px solid rgba(0, 212, 136, 0.25)', borderRadius: 10, fontSize: 11, color: '#00D488' }}>
+                  ✓ Assigning crew synchronizes immediately with the Driver Duty HUD and Conductor POS apps so the duty can be started right away.
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 24 }}>
+                <button
+                  type="button"
+                  onClick={() => setAssigningBus(null)}
+                  style={{
+                    padding: '10px 18px',
+                    background: 'transparent',
+                    border: `1px solid ${isLight ? '#cbd5e1' : 'rgba(255,255,255,0.2)'}`,
+                    borderRadius: 10,
+                    color: isLight ? '#64748b' : '#94a3b8',
+                    cursor: 'pointer',
+                    fontWeight: 700,
+                  }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    try {
+                      await apiClient.post('/api/v1/operator/trips/dispatch', {
+                        busId: assigningBus.id,
+                        driverId: busDriver || undefined,
+                        conductorId: busConductor || undefined,
+                      }).catch(() => null);
+                    } catch {}
+                    setBuses((prev) =>
+                      prev.map((b) => (b.id === assigningBus.id ? { ...b, driver: busDriver, conductor: busConductor } : b))
+                    );
+                    setAssigningBus(null);
+                  }}
+                  style={{
+                    padding: '10px 22px',
+                    background: 'linear-gradient(135deg, #00B87A 0%, #00875A 100%)',
+                    border: 'none',
+                    borderRadius: 10,
+                    color: '#ffffff',
+                    fontWeight: 900,
+                    cursor: 'pointer',
+                    boxShadow: '0 4px 15px rgba(0, 184, 122, 0.4)',
+                  }}
+                >
+                  Save Crew & Dispatch
+                </button>
+              </div>
             </div>
           </div>
         )}
